@@ -1,0 +1,70 @@
+# ============================================================
+# Docker 构建上下文排除清单
+#
+# 为什么必须存在：`.gitignore` 对 `docker build` **完全不生效**。
+# Dockerfile 里的 `COPY . .` 会把整个目录作为构建上下文打包，
+# 没有本文件时，本地 .env（含真实 API Key）、.venv（数百 MB）、
+# artifacts/（含旧版源码副本）都会被写进镜像层，
+# 且镜像一旦 push 到仓库，密钥即永久泄露（删层也去不掉历史）。
+#
+# 注意：只排除**根目录**的 md（用 / 前缀锚定），
+# 不能写 `*.md` —— 那会误删 data/ 下的知识库文档（如 开发者API接入指南.md）。
+#
+# 说明：开源协作文档（LICENSE / NOTICE / CONTRIBUTING 等）与 CI 配置已按项目
+# 当前定位移除，故下方不再排除它们；若后续补回许可证，记得同步本文件。
+#
+# 详见 docs/production-readiness-review.md 与 docs/project-assessment.md
+# ============================================================
+
+# ---------------- 密钥与本地配置（最高优先级） ----------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------------- 虚拟环境与依赖缓存 ----------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---------------- 运行时数据与日志（应由 volume 挂载，不进镜像） ----------------
+vector_store/
+logs/
+*.log
+memory_store/
+
+# ---------------- 备份、产物与缓存 ----------------
+artifacts/
+.pytest_cache/
+.pytest_tmp/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ---------------- 版本控制与编辑器 ----------------
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+.ipynb_checkpoints/
+
+# ---------------- 仅根目录的说明与协作文档（知识库 data/ 下的 md 必须保留） ----------------
+# 注意：必须用 / 前缀锚定到根目录。
+# 若写成 `*.md`，会把 data/ 下的知识库文档（如 开发者API接入指南.md）一并排除，
+# 导致镜像内知识库为空。
+/README.md
+docs/
+
+# ---------------- 开发与运维工具（生产镜像不需要） ----------------
+tests/
+scripts/
+pyproject.toml
+pytest.ini
+requirements-dev.txt
+requirements.lock

@@ -1,0 +1,148 @@
+# RAG L5 离线检索评测用例（可自行增删，无需改代码）
+#
+# 字段：
+#   question         用户问题
+#   expect_keywords  命中判定的关键词（Top-K 任一片段包含任一即算命中）
+#   expect_source    可选，限定命中片段的来源文件名
+#   expect_section   可选，期望答案所在的章节锚点（如「第三章 假期管理」「1.3 密码重置」）。
+#                    用于「章节命中率」——结构感知切分（T2-2）上线后才有意义；
+#                    子串匹配 heading_path / chapter / section 任一字段，写关键词即可。
+#
+# 规模说明（2026-09-08 扩充：4 条 → 25 条）
+#   原先只有 4 条，A/B 对比时 hit_rate 与 MRR **两组都是 1.000**（天花板效应），
+#   完全无法区分策略优劣，A/B 结论只能靠 section_hit_rate 单指标支撑，说服力不足。
+#   现覆盖 11 篇文档的 25 个场景（含跨文档同名概念，如「分级」在数据分级/客户分级/
+#   伙伴分级里都有），让 hit_rate / MRR 重新具备区分度。
+#
+# 覆盖：员工手册(5) 财务报销(2) IT支持(3) 产品FAQ(3) 信息安全(2)
+#       客户成功(1) 招聘(2) 行政(1) 销售(2) API指南(2) 系统速查(1) PDF白皮书(1)
+cases:
+  # ---------------- 员工手册 ----------------
+  - question: "年假有多少天"
+    expect_keywords: ["年休假", "年假"]
+    expect_source: "员工手册.txt"
+    expect_section: "第三章 假期管理"
+  - question: "试用期一般多长时间"
+    expect_keywords: ["试用期"]
+    expect_source: "员工手册.txt"
+    expect_section: "第一章 入职与试用"
+  - question: "加班有什么规定"
+    expect_keywords: ["加班"]
+    expect_source: "员工手册.txt"
+    expect_section: "第二章 工作时间与考勤"
+  - question: "五险一金什么时候开始缴纳"
+    expect_keywords: ["五险一金", "公积金"]
+    expect_source: "员工手册.txt"
+    expect_section: "第四章 薪酬与福利"
+  - question: "请病假需要什么材料"
+    expect_keywords: ["病假"]
+    expect_source: "员工手册.txt"
+    expect_section: "第三章 假期管理"
+
+  # ---------------- 财务报销 ----------------
+  - question: "报销流程怎么走"
+    expect_keywords: ["报销"]
+    expect_source: "财务报销管理制度.txt"
+    expect_section: "第三章 报销流程"
+  - question: "出差的住宿费标准是多少"
+    expect_keywords: ["住宿"]
+    expect_source: "财务报销管理制度.txt"
+    expect_section: "第二章 报销范围与标准"
+  - question: "发票有什么要求"
+    expect_keywords: ["发票"]
+    expect_source: "财务报销管理制度.txt"
+    expect_section: "第四章 票据管理"
+
+  # ---------------- IT 支持 ----------------
+  - question: "VPN 连接不上怎么办"
+    expect_keywords: ["VPN"]
+    expect_source: "IT支持指南.txt"
+    expect_section: "二、VPN 远程接入"
+  - question: "密码忘记了怎么重置"
+    expect_keywords: ["密码"]
+    expect_source: "IT支持指南.txt"
+    expect_section: "一、账号与密码"
+  - question: "邮箱容量不够怎么办"
+    expect_keywords: ["邮箱"]
+    expect_source: "IT支持指南.txt"
+    expect_section: "三、邮箱与通讯"
+  - question: "电脑坏了怎么报修"
+    expect_keywords: ["报修"]
+    expect_source: "IT支持指南.txt"
+    expect_section: "四、办公设备"
+
+  # ---------------- 产品 FAQ ----------------
+  - question: "知识库支持哪些文档格式"
+    expect_keywords: ["格式", "PDF"]
+    expect_source: "产品FAQ.txt"
+    expect_section: "三、知识库功能"
+  - question: "私有化部署需要什么硬件"
+    expect_keywords: ["私有化", "硬件"]
+    expect_source: "产品FAQ.txt"
+    expect_section: "二、部署与接入"
+  - question: "平台怎么计费"
+    expect_keywords: ["计费", "价格"]
+    expect_source: "产品FAQ.txt"
+    expect_section: "四、计费与授权"
+
+  # ---------------- 信息安全 ----------------
+  - question: "数据分为哪几个密级"
+    expect_keywords: ["分级", "密级"]
+    expect_source: "信息安全与数据合规制度.txt"
+    expect_section: "第二章 数据分类分级"
+  - question: "发生安全事件要怎么上报"
+    expect_keywords: ["安全事件", "上报"]
+    expect_source: "信息安全与数据合规制度.txt"
+    expect_section: "第五章 安全事件管理"
+
+  # ---------------- 客户成功 ----------------
+  - question: "客户健康度由哪些维度构成"
+    expect_keywords: ["健康度"]
+    expect_source: "客户成功服务手册.txt"
+    expect_section: "二、客户分层与运营节奏"
+
+  # ---------------- 招聘 ----------------
+  - question: "面试流程是怎样的"
+    expect_keywords: ["面试"]
+    expect_source: "招聘与人才发展制度.txt"
+    expect_section: "第一章 招聘管理"
+  - question: "晋升需要什么条件"
+    expect_keywords: ["晋升"]
+    expect_source: "招聘与人才发展制度.txt"
+    expect_section: "第四章 晋升与激励机制"
+
+  # ---------------- 行政 ----------------
+  - question: "会议室怎么预订"
+    expect_keywords: ["会议室", "预订"]
+    expect_source: "行政与办公管理制度.txt"
+    expect_section: "第二章 会议管理"
+
+  # ---------------- 销售 ----------------
+  - question: "客户是怎么分级的"
+    expect_keywords: ["客户分级", "分级"]
+    expect_source: "销售管理办法.txt"
+    expect_section: "第二章 客户管理"
+  - question: "合同评审要注意什么"
+    expect_keywords: ["合同"]
+    expect_source: "销售管理办法.txt"
+    expect_section: "第四章 合同管理"
+
+  # ---------------- 开发者 API 指南（Markdown）----------------
+  - question: "API 调用的限流规则是什么"
+    expect_keywords: ["限流", "QPS"]
+    expect_source: "开发者API接入指南.md"
+    expect_section: "1. 鉴权与网关"
+  - question: "怎么调用知识库检索接口"
+    expect_keywords: ["检索", "retrieval"]
+    expect_source: "开发者API接入指南.md"
+    expect_section: "3. 知识库检索"
+
+  # ---------------- 系统权限速查 ----------------
+  - question: "申请管理员权限要走什么流程"
+    expect_keywords: ["审批", "权限"]
+    expect_source: "系统权限与审批速查.txt"
+
+  # ---------------- PDF 白皮书 ----------------
+  - question: "平台的核心能力有哪些"
+    expect_keywords: ["核心能力", "知识引擎"]
+    expect_source: "星河智能云平台产品白皮书.pdf"

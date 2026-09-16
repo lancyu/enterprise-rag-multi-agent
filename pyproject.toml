@@ -1,0 +1,146 @@
+# ============================================================
+# 工具配置（仅静态检查，不含打包元数据——本项目是应用而非可发布库）
+#
+# 死代码治理分三层，对应下面三个 [tool.*] 段：
+#   1. ruff    —— 未使用 import / 局部变量 / 未定义名（零误报，作为 CI 硬门禁）
+#   2. vulture —— 未使用函数 / 类 / 变量（对框架约定易误报，靠 ignore_decorators 收敛）
+#   3. deptry  —— 未使用 / 缺失 / 传递依赖（运行时依赖靠 per_rule_ignores 显式豁免）
+#
+# 项目自建的 AST 扫描器见 scripts/deadcode_scan.py，执行契约见 tests/test_deadcode.py。
+# 三层互补的原因：ruff/vulture 看不到 getattr(config, "X") 这类动态消费，
+# 也认不出字符串形式的引用（FastAPI 装饰器、LangGraph 节点名）。
+# ============================================================
+
+# ------------------------------------------------------------
+# ruff：启用与「未使用 / 死代码 / 僵尸抑制」直接相关的规则
+#
+# 为什么不学 langchain 开 `select = ["ALL"]`：本项目仍有大量与死代码无关的
+# 历史风格问题（E501 长行、PLR 复杂度、S 安全类等数百处），一次全开会让门禁
+# 长期红着，反而失去约束力。规则按「零误报 + 与本次治理目标同源」两个标准增量开启。
+#
+# 四个规则集各自的理由：
+#   F      —— 未使用 import / 局部变量 / 重定义（死代码主战场）
+#   E4     —— import 位置（E401/E402）。迟到的 import 会制造「函数定义前先被
+#             引用」的假象，也让依赖关系看不出来；本项目已在 retriever.py 真踩到一次
+#             （`import fnmatch` 写在模块中部）
+#   BLE    —— 裸 `except Exception`。不是要求消灭它（降级路径**就该**吞异常），
+#             而是要求每一处都**显式写出来并说明为什么**，避免"顺手 catch 一切"
+#             掩盖真实故障
+#   RUF100 —— 僵尸 noqa。这条是本次治理的元规则：抑制注释一旦过期就不再被校验，
+#             会让人误以为"这里已经确认过"。它与 tests/deadcode_allowlist.py 的
+#             僵尸豁免校验、deptry 的 per_rule_ignores 清理是同一件事的三个面
+#
+# ⚠️ 顺序有讲究：**必须先开 BLE，再清理 RUF100**。RUF100 的报错分两类，含义完全不同
+# （实测验证过，不是推测）：
+#   - `non-enabled: X` —— 规则 X 根本没开，这个 noqa 现在无用；**但规则一开就可能变必需**。
+#     先清后开 = 把必需的抑制注释删掉，规则一开立刻全红。
+#   - `unused: X` —— 规则 X 开着、但此处确实不违规，这个 noqa 是**真僵尸**，可以放心删。
+# 本项目的 12 处清理全部属于第二类，其中 3 处特别值得一提：它们抑制的是 BLE001，
+# 而 ruff 的 BLE001 **不报"捕获后又重新抛出/转换抛出"的处理器**——所以那 3 处
+# （providers/llm.py 重试与流式回退、rag/evaluator.py 转换异常类型）从一开始就不需要
+# noqa，属于历史遗留的死注释。判据不是"有没有 except Exception"，而是"异常有没有被
+# 吞掉"——被吞掉才需要显式说明理由。
+# ------------------------------------------------------------
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+extend-exclude = [
+    ".venv",
+    "artifacts",      # 历史上遗留的源码备份副本，不参与任何检查
+    "vector_store",
+    "memory_store",
+    "logs",
+    "data",
+    ".pytest_tmp",
+]
+
+[tool.ruff.lint]
+select = ["F", "E4", "BLE", "RUF100"]
+
+[tool.ruff.lint.per-file-ignores]
+# 包的 __init__.py 承担「re-export 对外 API」职责，导入即是使用。
+# 这是 FastAPI / langchain 等项目的通行做法（见 fastapi 官方 pyproject.toml）。
+"__init__.py" = ["F401"]
+
+# ------------------------------------------------------------
+# vulture：未使用函数 / 类 / 变量
+#
+# min_confidence = 80：vulture 的置信度按代码类型固定（import 90%、函数/类/变量 60%）。
+#   80 能挡掉绝大多数「名字统计型误报」，同时保留高确定性的发现。
+# ignore_decorators：被这些装饰器注册的函数由框架隐式调用，没有显式调用点。
+#   这是 vulture 官方文档推荐的 FastAPI / pytest 处理方式。
+# 日常排查（含 60% 档）请用项目自建扫描器：
+#   python scripts/deadcode_scan.py .
+# 若将来需要抑制个别条目，用官方机制：
+#   vulture app scripts --make-whitelist > .vulture_whitelist.py
+# 并把该文件一并作为扫描路径传入。
+# ------------------------------------------------------------
+[tool.vulture]
+min_confidence = 80
+paths = ["app", "scripts"]
+ignore_decorators = [
+    "@app.get", "@app.post", "@app.put", "@app.delete", "@app.patch",
+    "@app.middleware", "@app.exception_handler", "@app.on_event",
+    "@router.get", "@router.post", "@router.put", "@router.delete", "@router.patch",
+    "@pytest.fixture",
+    "@field_validator", "@model_validator",
+]
+exclude = ["artifacts", ".venv", "tests"]
+
+# ------------------------------------------------------------
+# deptry：依赖健康度
+#
+# known_first_party：项目内部模块。scripts/ 未做成包，故把其中被 import 的
+#   chunk_metrics 也显式登记为一方模块。
+#
+# per_rule_ignores 的每条都写明理由——这是 deptry 官方文档与真实项目
+#   （如 contextgem）的既有做法：豁免必须是一次有意识的决策。
+# ------------------------------------------------------------
+[tool.deptry]
+requirements_files = ["requirements.txt"]
+requirements_files_dev = ["requirements-dev.txt"]
+known_first_party = ["app", "scripts", "chunk_metrics"]
+extend_exclude = [
+    "artifacts",      # 源码备份副本，不代表当前依赖关系
+    ".venv", "vector_store", "memory_store", "logs", "data", ".pytest_tmp",
+]
+
+[tool.deptry.per_rule_ignores]
+# DEP001：import 了但未声明为依赖 —— 全部是「可选依赖」，由 try/except 或
+# 代码内 import 做存在性探测，缺失时自动降级，故不写入 requirements.txt。
+DEP001 = [
+    "torch",                # 可选：本地 BERT 路由分类器（app/core/model_router.py）
+    "transformers",         # 可选：同上
+    "chromadb",             # 可选：生产级向量库，VECTOR_DB_TYPE=chroma 时启用
+    "sentence_transformers", # 可选：cross-encoder 精排（app/providers/rerank.py）
+    "pytesseract",          # 可选：扫描版 PDF 的 OCR 兜底（app/utils/doc_loader.py）
+]
+# DEP002：声明了但代码里没 import —— 属于「运行期由命令行/框架隐式使用」。
+# 这是 deptry 自身文档 JSON 输出中就会出现的经典误报类型，无原生标记机制，
+# 只能显式豁免。
+DEP002 = [
+    "uvicorn",              # ASGI 服务器：`uvicorn app.main:app` 启动，业务代码不 import
+    "python-multipart",     # FastAPI 解析 multipart/form-data（文件上传）的运行时依赖，无 import 点
+]
+# DEP003：直接使用别人的传递依赖。**本项已清空，且刻意保留空列表**——
+# 记录一次决策，避免以后又退回去用豁免代替声明。
+#
+# 原先豁免 4 项（yaml / PIL / starlette / langsmith），现已全部处置完：
+#   - yaml、PIL、starlette → 升格为 requirements.txt 的直接依赖。
+#     判据是「直接用就该直接声明」+「失效代价」：starlette 缺失会在**启动时**
+#     炸；Pillow 缺失会被 doc_loader 的 except 吞掉，表现为「扫描版 PDF 静默变空」，
+#     是最难排查的一类故障。让问题在安装期暴露远好于在运行期。
+#   - langsmith → 全仓已无直接 import（追踪能力由 LangChain 通过环境变量接管，
+#     见 app/core/observability.py）。这条豁免是**僵尸条目**，故删除。
+#
+# 以后再出现 DEP003，先问：这个包是不是该写进 requirements.txt？
+DEP003 = []
+# DEP004：生产代码 import 了开发依赖。**本项同样已清空**：pytest 只出现在
+# tests/ 下，deptry 认得 requirements-dev.txt 里的 dev 依赖，从未真的报过
+# DEP004 —— 原先那条 `["pytest"]` 是**僵尸豁免**（从未生效的豁免比不写更糟：
+# 它让人以为「这条已确认过」，实际什么都没确认）。
+#
+# 本节（per_rule_ignores）现在的健康度是可以机器验证的：
+# 把任意一条清空后重跑 deptry，若不再报该项，说明该条是僵尸。
+# 本次就是这么查出 DEP003 的 4 条与 DEP004 的 1 条已失效。
+DEP004 = []

@@ -1,0 +1,17 @@
+# ============================================================
+# 开发 / 门禁依赖（不进入生产镜像）
+# 安装：pip install -r requirements.txt -r requirements-dev.txt
+#
+# 用途分工：
+#   pytest   —— 单元测试
+#   ruff     —— 未使用 import / 未使用变量 / 未定义名 / 过期 noqa（死代码规则）
+#   vulture  —— 未使用函数 / 类 / 变量（框架误报靠 pyproject 的 ignore_decorators 收敛）
+#   deptry   —— 未使用 / 缺失 / 传递依赖
+#
+# 这三个静态检查工具由 tests/test_deadcode.py 驱动（本地门禁），
+# 配置见 pyproject.toml 的 [tool.ruff] / [tool.vulture] / [tool.deptry]。
+# ============================================================
+pytest>=8.0,<10.0
+ruff>=0.6,<1.0
+vulture>=2.11,<3.0
+deptry>=0.20,<1.0

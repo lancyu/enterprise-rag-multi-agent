@@ -1,0 +1,29 @@
+# ============================================================
+# 向量库客户端（按需安装）
+# ============================================================
+#   pip install -r requirements-vector.txt
+#
+# 只有把 VECTOR_DB_TYPE 设为 milvus / chroma 时才需要装。
+# 默认的 memory 后端是纯 numpy 实现（见 app/db/vector_db.py），零额外依赖，
+# 所以这两个包**故意不放进 requirements.txt** —— 免得只用内存库的部署
+# 被迫拖上一个几十 MB 的 chromadb。
+#
+# 装完用这条命令一键确认「连得上、读得进、查得到」：
+#   python scripts/check_vector_db.py
+#
+# 说明：本项目通过 langchain-community 间接依赖 langchain-core，
+# 这里不重复声明，避免与 requirements.txt 的版本区间打架。
+
+# ---------------- Chroma（单机生产级，嵌入式）----------------
+# 自带持久化目录，无需独立服务进程；HNSW 索引。
+chromadb>=0.5.0
+
+# ---------------- Milvus（分布式向量库）----------------
+# 提供 MilvusClient。连真实 Milvus 服务端只需要它；
+# 配套服务见 docker-compose.yml 的 milvus profile（三个容器：milvus + etcd + minio）。
+pymilvus>=2.4.0,<3.0
+
+# ---------------- Milvus Lite（可选，用于免 Docker 的本地验证）----------------
+# 嵌入式引擎：MilvusClient(uri="./milvus.db") 直接进程内跑，不需要 Docker。
+# 只为在没有服务端时也能跑通 scripts/verify_milvus_lite.py 而装，生产环境不需要。
+pymilvus[milvus_lite]>=2.4.0,<3.0

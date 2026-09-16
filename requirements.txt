@@ -1,0 +1,55 @@
+# ============================================================
+# 核心依赖（支持 Python 3.11 / 3.13；Docker 镜像基于 python:3.11-slim）
+# 安装：pip install -r requirements.txt
+#        开发/CI 另需 pip install -r requirements-dev.txt
+# 版本策略：下界（>=）保证最低可用，上界（<）锁定到下一大版本，避免上游 breaking
+#   change 静默打入生产（评估 P2-4「无版本锁定」）。
+# 可复现构建：requirements.lock 是本机开发解释器（Python 3.14.6）的全量环境快照，
+#   含测试与静态检查工具，用于复现开发/CI 环境；目标环境 Python 版本不同时，
+#   请在该环境下重新 `pip freeze` 生成。生产镜像直接用本文件即可。
+# ============================================================
+fastapi>=0.115.0,<1.0              # Web 服务框架，原生异步、自动生成 OpenAPI 文档
+uvicorn[standard]>=0.30.0,<1.0     # ASGI 服务器
+# starlette 是 fastapi 的底层依赖，但 app/api/chat.py 直接 import 了它的
+# starlette.concurrency.iterate_in_threadpool（把同步生成器搬进线程池）。
+# 「直接用」就该「直接声明」——否则哪天 fastapi 换了底层 ASGI 实现，
+# 会在**服务启动时**ImportError 而不是给出可诊断的依赖冲突。
+starlette>=0.37,<2.0               # ASGI 核心（直接使用 concurrency 线程池工具）
+pydantic>=2.9.0,<3.0               # 数据校验
+python-dotenv>=1.0.0,<2.0          # .env 环境变量加载
+
+# ---------------- AI 框架 ----------------
+langchain-core>=0.3.0,<2.0         # 核心抽象：Embeddings / ChatModel / Prompt
+langchain-community>=0.3.0,<1.0     # 文档加载器（PyPDF / Text）
+langchain-openai>=0.2.0,<2.0       # OpenAI 兼容协议客户端
+langchain-text-splitters>=0.3.0,<2.0  # 文档切片
+langgraph>=0.2.0,<2.0              # 有向图工作流引擎
+
+# ---------------- 检索与存储 ----------------
+numpy>=1.26,<3.0                   # 内存向量库检索计算
+pypdf>=4.3.0,<7.0                  # PDF 解析（纯文本降级）
+pdfplumber>=0.11.0,<1.0            # PDF 解析（首选：表格识别并转为 Markdown pipe table）
+redis>=5.0.0,<9.0                  # 会话缓存（不可用时自动降级为内存）
+
+# 以下两项过去是「靠传递依赖白拿」，现已显式声明（原为 deptry DEP003 豁免项）。
+# 判据是**失效代价**而不是「是不是传递依赖」：
+#   - PyYAML 缺失 → app/rag/evaluator.py 在解析评测用例时 ImportError；
+#   - Pillow 缺失 → app/utils/doc_loader.py 的 OCR 分支被 except 吞掉，
+#     表现为「扫描版 PDF 静默变成空文本」，最难排查的一类故障。
+# 上游（pdfplumber / langchain）任何一次依赖调整都可能把它俩摘掉，
+# 声明出来才能让这类失效在安装期暴露，而不是在运行时。
+PyYAML>=6.0,<7.0                   # app/rag/evaluator.py 解析 data/eval_cases.yaml
+Pillow>=10.0,<13.0                 # app/utils/doc_loader.py OCR 前处理（PIL.Image）
+
+# ---------------- 工具 ----------------
+httpx>=0.27,<1.0                   # HTTP 客户端（Embedding / 工单接口）
+python-multipart>=0.0.9,<1.0       # 文件上传表单解析
+
+# ============================================================
+# 可选依赖（生产环境按需启用）
+# ============================================================
+# 向量库客户端（chromadb / pymilvus）已独立到 requirements-vector.txt：
+#   pip install -r requirements-vector.txt
+# 只有 VECTOR_DB_TYPE=chroma / milvus 时才需要装；默认的 memory 后端零额外依赖。
+# 装完用 `python scripts/check_vector_db.py` 一键验证连通性与读写。
+# sentence-transformers>=2.2.0   # 本地神经 Embedding 模型（替代 API 向量化）
