@@ -45,7 +45,7 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **15240 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **15770 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | 8 个 + 2 个条件分支 |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
@@ -75,7 +75,7 @@
 │                  app/utils/          加载 / 缓存 / 校验 / 日志  │
 └─────────────────────────────────────────────────────────────┘
                           ▲
-                          │ 全局配置：app/config.py（718 行）
+                          │ 全局配置：app/config.py（730 行）
                           │ 贯穿所有层：app/core/tracing.py（全链路 span 树）
 ```
 
@@ -188,7 +188,7 @@
 |---|---|---|
 | `app/__init__.py` | 1 | 包声明 |
 | `app/main.py` | **1-231** | 应用装配：lifespan、中间件、路由注册、全局异常 |
-| `app/config.py` | **1-718** | 全局配置中心（所有环境变量集中于此） |
+| `app/config.py` | **1-730** | 全局配置中心（所有环境变量集中于此） |
 
 ### 3.2 `app/api/` — HTTP 接口层（1492 行）
 
@@ -221,7 +221,7 @@
 | `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
 | `workflow_graph.py` | **1-192** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（4782 行）
+### 3.4 `app/core/` — 调度与基础能力（5300 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -232,6 +232,11 @@
 > 它与被删的那套**不是同一份代码、也不是同一个思路**（那套是八模块规则互相牵制，
 > 这套是"意图即数据"的一张表 + 惰性升级）。Phase 0 阶段它只服务预演接口，
 > **尚未接管生产**——切换计划见 `docs/intent-routing-hybrid-design.md` §8.1。
+>
+> 2026-09-16 完成过一次可迁移性改造（删掉手写词表、改为从例句反推）：
+> 29 条探针问句在**零 LLM** 的确定性层上 **9/29 → 20/29，且无一例回归**；
+> 实测数据、四处与原设计稿的偏离、以及"尚未接管生产"这个事实，
+> 都记在 `docs/intent-routing-hybrid-design.md` 的 **§十一 实现后记**。
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
@@ -241,7 +246,7 @@
 | `tool_agent.py` | **1-684** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
 | `request_ctx.py` | **1-213** | 请求级共享：query 向量 / 来源白名单 / 本轮证据（授权与证据不由模型回传） |
 | `self_check.py` | **1-340** | 启动自检与健康检查（9 项） |
-| `prompts.py` | **1-224** | 提示词集中注册表 |
+| `prompts.py` | **1-232** | 提示词集中注册表 |
 | `tracing.py` | **1-161** | 全链路 span 树 + trace_id 贯穿 |
 | `observability.py` | **1-39** | LangSmith 追踪接入 |
 | `rag_engine.py` | **1-109** | RAG 五层的兼容门面 |
@@ -352,7 +357,7 @@
 `AUTH_EXEMPT_PATHS` 里的 Dify 接口有自己的 Key 校验，所以两条鉴权链**不能互相替代**。
 CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"本地能跑、上线跨域全挂"，代码里已自动关闭凭据。
 
-#### 📍 `app/config.py`（1-718）
+#### 📍 `app/config.py`（1-730）
 
 配置分区（按行号）：
 
@@ -362,27 +367,27 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 | 47-54 | 项目路径 |
 | 55-100 | 大模型配置（OpenAI 兼容协议；含思考开关、超时与输出上限） |
 | 101-117 | **Agent（function calling）配置** —— 工具决策最多几轮 `TOOL_AGENT_MAX_STEPS` 116 |
-| 118-132 | **复杂 RAG Agent 配置** —— 子问题上限 124 与合并片段上限 130 |
-| 133-232 | **混合意图路由（四层漏斗）** —— `ROUTE_BUDGET_MS` 170（**总耗时硬上界**）、`ROUTE_LEXICAL_FLOOR` 192 / `ROUTE_LEXICAL_MARGIN` 200、`effective_route_semantic_floor` 215-221 / `effective_route_semantic_margin` 224-230 |
-| 233-244 | **业务结构化数据库（SQLite，只读）** —— `SQLITE_DB_PATH` 242（员工 / 假期余额两张表，供 3 个只读工具查询） |
-| 245-260 | Embedding 配置（含查询侧指令前缀 `EMBEDDING_QUERY_PREFIX` 255） |
-| 261-316 | 向量数据库配置（`VECTOR_DB_CHOICES` 265、`VECTOR_DB_TYPE` 270、`MILVUS_URI` 282、`effective_vector_collection` 292-299、`validate_vector_db_type` 302-314） |
-| 317-325 | Redis 配置 |
-| 326-363 | 对话与检索参数（`effective_score_threshold` 344-353、`effective_fallback_min` 356-362） |
-| 364-388 | 融合权重与阈值 |
-| 389-395 | 词面倒排索引配置（BM25） |
-| 396-407 | Rerank 精排 |
-| 408-419 | 可观测性接入（LangSmith） |
-| 420-425 | Embedding 缓存配置 |
-| 426-430 | 入站限流配置 |
-| 431-462 | 记忆系统配置（短期记忆 + 长期记忆） |
-| 463-469 | 切片策略（基础：分片大小 + 重叠） |
-| 470-549 | 切片策略（配置化 + 策略可替换） |
-| 550-570 | PDF 图片抽取 |
-| 571-598 | Dify 兼容接口 |
-| 599-620 | 入站鉴权（fail-closed） |
-| 621-651 | 来源访问控制 ACL（`_parse_source_acl` 634-647） |
-| 652-718 | 服务配置 + `mask_secret` 660-666 + `dump_config` 669-718 |
+| 118-132 | **复杂 RAG Agent 配置** —— 子问题上限 `COMPLEX_RAG_MAX_SUBQUERIES` 124 与合并片段上限 `COMPLEX_RAG_MAX_DOCS` 130 |
+| 133-244 | **混合意图路由（四层漏斗）** —— `ROUTE_BUDGET_MS` 170（**总耗时硬上界**）、`ROUTE_LEXICAL_FLOOR` 200 / `ROUTE_LEXICAL_MARGIN` 212、`effective_route_semantic_floor` 227-233 / `effective_route_semantic_margin` 236-242 |
+| 245-256 | **业务结构化数据库（SQLite，只读）** —— `SQLITE_DB_PATH` 254（员工 / 假期余额两张表，供 3 个只读工具查询） |
+| 257-272 | Embedding 配置（含查询侧指令前缀 `EMBEDDING_QUERY_PREFIX` 267） |
+| 273-328 | 向量数据库配置（`VECTOR_DB_CHOICES` 277、`VECTOR_DB_TYPE` 282、`MILVUS_URI` 294、`effective_vector_collection` 304-311、`validate_vector_db_type` 314-326） |
+| 329-337 | Redis 配置 |
+| 338-375 | 对话与检索参数（`effective_score_threshold` 356-365、`effective_fallback_min` 368-374） |
+| 376-400 | 融合权重与阈值 |
+| 401-407 | 词面倒排索引配置（BM25） |
+| 408-419 | Rerank 精排 |
+| 420-431 | 可观测性接入（LangSmith） |
+| 432-437 | Embedding 缓存配置 |
+| 438-442 | 入站限流配置 |
+| 443-474 | 记忆系统配置（短期记忆 + 长期记忆） |
+| 475-481 | 切片策略（基础：分片大小 + 重叠） |
+| 482-561 | 切片策略（配置化 + 策略可替换） |
+| 562-582 | PDF 图片抽取 |
+| 583-610 | Dify 兼容接口 |
+| 611-632 | 入站鉴权（fail-closed） |
+| 633-663 | 来源访问控制 ACL（`_parse_source_acl` 646-659） |
+| 664-730 | 服务配置 + `mask_secret` 672-678 + `dump_config` 681-730 |
 
 > ⚠️ **这张表是"整表错位"的高危区**（本项目的校验器只校验「末行是否覆盖文件末尾」，
 > 逐行标签与区间是否对得上是**查不出来**的）。混合路由配置块插在第 133 行之后，
@@ -605,30 +610,50 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 （最坏是"没找到"，语义上诚实），也不能把用户问题判成越界（等于无理由拒绝服务），
 更不能猜成工具（会去动业务数据）。
 
-#### 📍 `app/core/routing/`（1-1809）—— 混合意图路由（四层漏斗）
+#### 📍 `app/core/routing/`（1-2685）—— 混合意图路由（四层漏斗）
 
-七个文件，一条漏斗。**每个文件只回答一个问题**——这是它与被删掉的八模块规则路由
+九个文件，一条漏斗。**每个文件只回答一个问题**——这是它与被删掉的八模块规则路由
 最本质的差别（那套的失效方式是"改 A 坏 B"，复盘见 `docs/history/intent-routing-redesign.md`）。
 
 | 文件 | 行号范围 | 只回答一个问题 |
 |---|---|---|
-| `app/core/routing/catalog.py` | **1-423** | "有哪些意图？" —— 唯一的定义处（意图即数据） |
-| `app/core/routing/signals.py` | **1-245** | "这句话是哪种句式？" —— 正则判据与三态抽取 |
+| `app/core/routing/catalog.py` | **1-455** | "有哪些意图？" —— 唯一的定义处（意图即数据） |
+| `app/core/routing/similarity.py` | **1-138** | "两句话有多像？" —— 词面唯一量尺（字符 n-gram Dice） |
+| `app/core/routing/derive.py` | **1-143** | "词表能不能从例句算出来？" —— 能，除了标识符正则 |
+| `app/core/routing/vocabulary.py` | **1-114** | "领域词表的**类型**长什么样？" —— 一个词都没有 |
+| `app/core/routing/signals.py` | **1-327** | "这句话是哪种句式？" —— 正则判据与三态抽取 |
 | `app/core/routing/anchors.py` | **1-275** | "能不能整句锚定？" —— 层①，零成本 |
-| `app/core/routing/fusion.py` | **1-423** | "各候选各得几分、怎么融合？" —— 层② |
+| `app/core/routing/fusion.py` | **1-443** | "各候选各得几分、怎么融合？" —— 层② |
 | `app/core/routing/gating.py` | **1-115** | "分数够格吗？和次优通道拉开了吗？" —— 层③ |
-| `app/core/routing/arbitration.py` | **1-143** | "实在拿不准时问模型" —— 层④，唯一花钱处 |
-| `app/core/routing/router.py` | **1-369** | "按顺序串起来，并守住时间预算" —— 编排 |
+| `app/core/routing/arbitration.py` | **1-199** | "实在拿不准时问模型" —— 层④，唯一花钱处 |
+| `app/core/routing/router.py` | **1-380** | "按顺序串起来，并守住时间预算" —— 编排 |
 
 **四层漏斗，命中即短路**（写的是设计意图，**不是"已经接管生产"**）：
 
 ```
 ① 锚定（0 成本）       整句正则：寒暄 / 身份 / 越狱 / 员工属性句式
-②a 词面打分（0 成本）  Σ len(命中关键词)，专名与字段名优先
+②a 词面打分（0 成本）  与**例句**比字符 n-gram 相似度（不再是关键词表）
 ②b 语义打分（有条件）  词面判不了才升级 —— 见下方"惰性升级"
 ③ 门控（0 成本）       地板（绝对证据够不够）+ 边际（与次优通道拉开没）
 ④ 灰区仲裁（一次 LLM）  只有灰区才发生；失败或超时则保守兜底
+                       候选清单末尾固定带"以上都不是"，选中即判越界
 ```
+
+**例句是唯一的事实来源（2026-09-16 改）。** ②a 以前是 `Σ len(命中关键词)`，
+每条能力自带一张手写关键词表。那条路有结构性的毛病：**词表是闭集，用户说的话是开集**
+（写了"分机号"，用户说"座机"就漏，补词只能追着漏判跑），而且"命中词长度之和"
+会系统性抬高那些穷举了更多宾语的能力（"年假"+"调休" 4.0 压过表达提问意图的
+"区别" 2.0）。现在一律拿整句去比例句，于是：`keywords` 字段被**删除**，
+领域词表（属性词 / 业务片段）改由 `derive.py` 从例句**反推**，
+新增一个项目只需要写例句与描述。离线实测（29 条探针问句，关掉语义与仲裁两层）：
+**9/29 → 20/29**，且零回归。
+
+**闭集必须留一个"不在集合里"的出口。** ④ 的候选清单末尾固定追加一项
+"以上都不是"。没有它时提示词写的是"只能从中选一个"，而**模型必须挑一条**——
+实测「帮我写一首诗」被判成 `identity`，用户收到的是一段"我是企业内部助手"的自我介绍。
+这不是"多检索一次"那类可容忍的偏差，是答非所问。有它之后，三句彻底越界的话
+全部正确落到 `out_of_scope` 并给出标准话术。
+
 
 **惰性升级：把"省 LLM 调用"做彻底。** 最初的草案是"第 2 关无条件算一次 embedding"。
 那等于**把省下的 LLM 调用换成了一次网络往返**——目标没达成，只是把账单从
@@ -658,36 +683,70 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 > 生产入口仍是 `router_agent.route_query` 的一次模型调用。
 > 这样安排是为了**先把判定依据看清楚，再动生产链路**。
 
-#### 📍 `app/core/routing/catalog.py`（1-423）—— 意图目录（唯一的定义处）
+#### 📍 `app/core/routing/catalog.py`（1-455）—— 意图目录（唯一的定义处）
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `SCENES` | 62-68 | 通道闭集元组（五个 `SCENE_*` 常量在 50-54 定义）。场景名即节点名 |
-| `CHANNELS` | 68 | 包内别名，与 `SCENES` 指向**同一个对象**（不是拷贝） |
-| `DEFAULT_SCENE` | 72 | 兜底通道。**刻意不是 `tool` / `out_of_scope`** |
-| `CHANNEL_TARGETS` | 76-82 | 通道 → 图节点。**唯一的分支映射**，消灭散落各处的 `if intent == ...` |
-| `OUT_OF_SCOPE_ANSWER` | 89-95 | 越界话术（**全仓唯一一份**，`router_agent` 只是转出） |
-| `IntentSpec` | 105-132 | 一条能力声明：名字 / 通道 / 描述 / 锚点句 / 关键词 / guard / anchor |
-| `_SPECS` | 193-314 | 目录正文，当前 7 条 |
-| `validate_catalog` | 366-423 | 自洽校验。import 时执行一次，失败即 raise |
+| `SCENES` | 63-69 | 通道闭集元组（五个 `SCENE_*` 常量在 51-55 定义）。场景名即节点名 |
+| `CHANNELS` | 69 | 包内别名，与 `SCENES` 指向**同一个对象**（不是拷贝） |
+| `DEFAULT_SCENE` | 73 | 兜底通道。**刻意不是 `tool` / `out_of_scope`** |
+| `CHANNEL_TARGETS` | 77-83 | 通道 → 图节点。**唯一的分支映射**，消灭散落各处的 `if intent == ...` |
+| `OUT_OF_SCOPE_ANSWER` | 90-96 | 越界话术（**全仓唯一一份**，`router_agent` 只是转出） |
+| `IntentSpec` | 106-137 | 一条能力声明：名字 / 通道 / 描述 / 例句 / guard / anchor（**没有 keywords**） |
+| `_EXPLICIT_VOCABULARY` | 152-162 | 手写词表，**只剩标识符正则**——其余字段由例句反推 |
+| `vocabulary` | 169-187 | 取（并缓存）反推后的词表。**必须经函数读取**，别绑成快照 |
+| `_SPECS` | 216-346 | 目录正文，当前 7 条 |
+| `validate_catalog` | 398-455 | 自洽校验。import 时执行一次，失败即 raise |
 
 **为什么"意图即数据"值得单独强调**：新增一种意图 = 加一条 `IntentSpec`，
 路由代码、图拓扑、提示词**一个字都不用改**，有一条测试专门钉住这个承诺。
 上一版的做法是"加一种意图改五处"（关键词表、提示词、条件边、状态字段、前端徽章），
 改漏一处不报错，只表现为"这条规则从来不生效"——**静默失效是它被推翻的真正原因**。
+删掉 `keywords` 之后，这条承诺更硬了：**要动的东西少到只剩 `utterances` 一个字段**。
+
+**为什么 `utterances` 现在身兼三职**：它既是词面层的比对基准、语义层的向量锚点，
+又是领域词表的**反推来源**。所以"想让它认识某个新说法/新属性"只有一条路——
+**把那句话写成例句**（想认识"团队"，就得有一条带"团队"的例句）。
+这条约束是有意的：它把"词表"与"例句"这两份会各自漂移的事实来源合并成了一份。
 
 `validate_catalog` 失败即 `raise`，**不允许静默降级为"少一条规则"**。
 它防的是 Haystack `_validate_routes` 与 LangGraph `set(agent_names) - set(handoff_destinations)`
 都在防的那类失败：**某个分支永远到不了，而它不会有任何报错。**
 
-#### 📍 `app/core/routing/router.py`（1-369）—— 漏斗编排
+#### 📍 `app/core/routing/similarity.py`（1-138）—— 词面打分的唯一量尺
+
+`similarity.py` 与 `derive.py` 是为同一个问题而存在的：**引擎凭什么可以不认识业务词。**
+
+`similarity.py` 是词面打分的**唯一量尺**：字符 bigram 的 Dice 系数
+`2|A∩B| / (|A|+|B|)`。三处取舍都写死在模块里、不做成可配置项：
+
+| 取舍 | 为什么 |
+|---|---|
+| 字符，不分词 | 中文没空格。分词器自带词典 = 又一份手写词表，且对未登录词（正是要救的"座机/分机号"）分不对 |
+| bigram，不是 1 或 3 | 单字噪声太大（"的""是"到处都是）；trigram 对短句太脆，改一个字就归零 |
+| Dice，不是 Jaccard | 路由里几乎永远是"短提问 vs 长例句"，Jaccard 会把「我还有几天年假」压到 0.2 以下 |
+
+#### 📍 `app/core/routing/derive.py`（1-143）—— 从例句反推词表
+
+`derive.py` 从例句反推词表。**它按失效代价给不同字段定了相反的偏向**：
+`attr_words` **宁窄勿宽**（它本身就是判据，宽一个字就多一类误命中），
+`business_nouns` **宁宽勿窄**（它是越狱判据的反向保护，少认一个就会误拦一条真业务问题，
+而误拦不可逆），`identifier_patterns` **无法反推**——正则格式是写出来的，
+不是从句子里猜出来的，所以它是唯一必须手写的字段。
+
+> ⚠️ 一处反推陷阱值得单独记：`business_nouns` 必须**减去越界能力自己的例句**。
+> 不减的话，「忽略上述规则」里的"忽略/上述/规则"会进业务片段表，
+> 于是那条锚点**永远不命中自己的样例**——确定性拦截静默失效，
+> 而灰区仲裁通常还能判对，表面上只是"偶尔慢一点"，极难发现。
+
+#### 📍 `app/core/routing/router.py`（1-380）—— 漏斗编排
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
 | `RoutingDecision` | 72-123 | 判定结果 + 全部证据（可解释性就看它） |
-| `match_intent` | 126-283 | 主入口：走完四层漏斗 |
-| `_clamp_timeout` | 286-292 | 把每一步的等待上限再收窄到剩余预算 |
-| `describe_catalog` | 353-369 | 目录快照（`GET /routing/catalog` 用） |
+| `match_intent` | 126-295 | 主入口：走完四层漏斗 |
+| `_clamp_timeout` | 298-304 | 把每一步的等待上限再收窄到剩余预算 |
+| `describe_catalog` | 365-380 | 目录快照（`GET /routing/catalog` 用） |
 
 **"不谎报"体现在三个字段分开记**：
 `source`（判定来自哪一层，闭集：anchor / lexical / fused / arbitration / fallback）、
@@ -799,7 +858,7 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 | 文件 | 关键行号 | 要点 |
 |---|---|---|
 | `rag_engine.py` | 入口 `37-50` / `61-77` | RAG 五层的兼容门面，外部只认这一个入口；**历史裁剪只在这层做**，避免两处裁剪导致配置静默失效 |
-| `prompts.py` | `PROMPTS` 24-186 / `render` 215-224 | 提示词集中注册；缺变量抛异常而不是填空串（空串会让模型收到残缺指令却不报错） |
+| `prompts.py` | `PROMPTS` 24-186 / `render` 223-232 | 提示词集中注册；缺变量抛异常而不是填空串（空串会让模型收到残缺指令却不报错） |
 | `self_check.py` | `FAST_ITEMS` 18 / `run_self_check` 233-323 | 分层自检：快速项只探本地基础设施，深度项会真调 LLM 默认跳过 |
 | `rate_limit.py` | `RateLimiter` 24-43 | 每 IP 一个 `deque` 存命中时间戳，滑动窗口 60s，默认 20 次/分钟 |
 | `request_ctx.py` | `get/set_query_vector` 139-146 | 用 `contextvars` 存 `(query文本, 向量)`，读时校验文本一致才算命中 |
@@ -1826,12 +1885,12 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **444 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **460 passed** |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（5 项发现 = 豁免清单 5 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 14 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 509 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 519 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -1867,7 +1926,7 @@ open http://127.0.0.1:8001/static/index.html
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（15240 行）**
+**应用代码 `app/`（15770 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -1876,46 +1935,40 @@ open http://127.0.0.1:8001/static/index.html
 | `api/evaluation.py` | 80 | `api/knowledge.py` | 175 |
 | `api/memory.py` | 133 | `api/routing.py` | 110 |
 | `api/test.py` | 33 | `api/workflow.py` | 146 |
-| `config.py` | 718 | `core/__init__.py` | 1 |
+| `config.py` | 730 | `core/__init__.py` | 1 |
 | `core/errors.py` | 28 | `core/llm_factory.py` | 23 |
-| `core/observability.py` | 39 | `core/prompts.py` | 224 |
+| `core/observability.py` | 39 | `core/prompts.py` | 232 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 59 |
 | `core/request_ctx.py` | 213 | `core/router_agent.py` | 323 |
 | `core/routing/__init__.py` | 96 | `core/routing/anchors.py` | 275 |
-| `core/routing/arbitration.py` | 143 | `core/routing/catalog.py` | 423 |
-| `core/routing/fusion.py` | 423 | `core/routing/gating.py` | 115 |
-| `core/routing/router.py` | 369 | `core/routing/signals.py` | 245 |
-| `core/self_check.py` | 340 | `core/source_acl.py` | 48 |
-| `core/sub_agents.py` | 355 | `core/tool_agent.py` | 684 |
-| `core/tracing.py` | 161 | `db/__init__.py` | 1 |
-| `db/enterprise_db.py` | 170 | `db/redis_db.py` | 166 |
-| `db/vector_db.py` | 667 | `graph/__init__.py` | 1 |
-| `graph/edges.py` | 95 | `graph/nodes.py` | 566 |
-| `graph/state.py` | 166 | `graph/workflow_graph.py` | 192 |
-| `main.py` | 231 | `memory/__init__.py` | 185 |
-| `memory/chat_history.py` | 70 | `memory/consolidator.py` | 154 |
-| `memory/dream.py` | 148 | `memory/long_term.py` | 178 |
-| `memory/short_term.py` | 179 | `memory/store.py` | 331 |
-| `providers/__init__.py` | 53 | `providers/base.py` | 49 |
-| `providers/embeddings.py` | 278 | `providers/llm.py` | 280 |
-| `providers/rerank.py` | 102 | `rag/__init__.py` | 68 |
-| `rag/evaluator.py` | 382 | `rag/generator.py` | 402 |
-| `rag/indexer.py` | 595 | `rag/lexical.py` | 266 |
-| `rag/parent_store.py` | 139 | `rag/prepare.py` | 200 |
-| `rag/reorder.py` | 28 | `rag/rerank.py` | 8 |
-| `rag/retriever.py` | 510 | `rag/structure.py` | 334 |
-| `static/gen_favicon.py` | 148 | `tools/__init__.py` | 1 |
-| `tools/sqlite_tools.py` | 255 | `utils/__init__.py` | 1 |
-| `utils/cache.py` | 119 | `utils/doc_loader.py` | 283 |
-| `utils/embedding.py` | 22 | `utils/logger.py` | 74 |
-| `utils/validator.py` | 150 | | |
-
-**合计 14871 行**（75 个文件）。
-
-**测试 `tests/`（29 个文件，7661 行）与脚本 `scripts/`（12 个文件，3572 行）**
-
-| 文件 | 行数 | 文件 | 行数 |
-|---|---|---|---|
+| `core/routing/arbitration.py` | 199 | `core/routing/catalog.py` | 455 |
+| `core/routing/derive.py` | 143 | `core/routing/fusion.py` | 443 |
+| `core/routing/gating.py` | 115 | `core/routing/router.py` | 380 |
+| `core/routing/signals.py` | 327 | `core/routing/similarity.py` | 138 |
+| `core/routing/vocabulary.py` | 114 | `core/self_check.py` | 340 |
+| `core/source_acl.py` | 48 | `core/sub_agents.py` | 355 |
+| `core/tool_agent.py` | 684 | `core/tracing.py` | 161 |
+| `db/__init__.py` | 1 | `db/enterprise_db.py` | 170 |
+| `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
+| `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
+| `graph/nodes.py` | 566 | `graph/state.py` | 166 |
+| `graph/workflow_graph.py` | 192 | `main.py` | 231 |
+| `memory/__init__.py` | 185 | `memory/chat_history.py` | 70 |
+| `memory/consolidator.py` | 154 | `memory/dream.py` | 148 |
+| `memory/long_term.py` | 178 | `memory/short_term.py` | 179 |
+| `memory/store.py` | 331 | `providers/__init__.py` | 53 |
+| `providers/base.py` | 49 | `providers/embeddings.py` | 278 |
+| `providers/llm.py` | 280 | `providers/rerank.py` | 102 |
+| `rag/__init__.py` | 68 | `rag/evaluator.py` | 382 |
+| `rag/generator.py` | 402 | `rag/indexer.py` | 595 |
+| `rag/lexical.py` | 266 | `rag/parent_store.py` | 139 |
+| `rag/prepare.py` | 200 | `rag/reorder.py` | 28 |
+| `rag/rerank.py` | 8 | `rag/retriever.py` | 510 |
+| `rag/structure.py` | 334 | `static/gen_favicon.py` | 148 |
+| `tools/__init__.py` | 1 | `tools/sqlite_tools.py` | 255 |
+| `utils/__init__.py` | 1 | `utils/cache.py` | 119 |
+| `utils/doc_loader.py` | 283 | `utils/embedding.py` | 22 |
+| `utils/logger.py` | 74 | `utils/validator.py` | 150 |
 | `tests/__init__.py` | 1 | `tests/conftest.py` | 85 |
 | `tests/deadcode_allowlist.py` | 80 | `tests/fakes.py` | 102 |
 | `tests/test_biz_correctness.py` | 765 | `tests/test_chunk_keys.py` | 207 |
@@ -1925,7 +1978,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_memory_pipeline.py` | 197 | `tests/test_meta_align.py` | 132 |
 | `tests/test_multi_agent.py` | 874 | `tests/test_parent_chunk.py` | 112 |
 | `tests/test_pdf_image.py` | 97 | `tests/test_rag.py` | 204 |
-| `tests/test_routing_funnel.py` | 983 | `tests/test_service.py` | 247 |
+| `tests/test_routing_funnel.py` | 1371 | `tests/test_service.py` | 247 |
 | `tests/test_short_term_symmetry.py` | 221 | `tests/test_soft_warnings.py` | 253 |
 | `tests/test_soul_write.py` | 124 | `tests/test_span_tree_smoke.py` | 264 |
 | `tests/test_sqlite_tools.py` | 258 | `tests/test_structure.py` | 203 |
@@ -1955,26 +2008,26 @@ open http://127.0.0.1:8001/static/index.html
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **478 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+它对本文的 **519 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
 覆盖十类写法：
 
 | # | 声明类型 | 例子 |
 |---|---|---|
-| 1 | 符号行号（含类方法 / 嵌套函数 / 模块级常量） | `search` 246-488 |
-| 2 | 文件总行数（区间式） | `app/main.py` **1-226** |
-| 3 | 文件总行数（附录裸数字式） | `config.py` 639 |
+| 1 | 符号行号（含类方法 / 嵌套函数 / 模块级常量） | `retrieve` 250-492 |
+| 2 | 文件总行数（区间式） | `app/main.py` **1-231** |
+| 3 | 文件总行数（附录裸数字式） | `config.py` 730 |
 | 4 | 章节 / 全量小计（散文式） | `### 3.2 app/api/ — HTTP 接口层（1,390 行）` |
-| 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-639）` |
-| 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 198-207 |
+| 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-730）` |
+| 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 223-232 |
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:126-139` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（495 行）、`app/config.py`（718 行） |
-| 9 | 区域行号表（裸区间） | `241-337` 向量数据库配置 |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（495 行）、`app/config.py`（730 行） |
+| 9 | 区域行号表（裸区间） | `273-328` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:153-215` |
 
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：478 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：519 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 

@@ -19,6 +19,18 @@
 结构助词（的）、问句标记（呢/吗/？），以及三张句式词表——操作问句、对比问句、
 礼貌前缀。它们换到任何中文领域都一样，所以留在引擎里。
 
+两个"词表"字段的去向（2026-09-16 改）
+------------------------------------
+- ``policy_nouns`` / ``has_policy_context`` **已删除**。它的职责是"含规范名词就不算
+  在问某个人的值"，而这是词面打分的替代品：``Σ len(关键词)`` 分不出
+  「哪个部门负责报销」与「张三在哪个部门」，只能靠一张额外的手写名词表去否掉。
+  改成与例句做 n-gram 相似度之后（:mod:`app.core.routing.similarity`），
+  这两句在``catalog`` 里各自有例句，相似度直接把它们分开（1.00 vs 0.43），
+  guard 变成纯粹的冗余——而冗余的手写词表正是本项目要清掉的那类东西。
+- ``business_nouns`` **改为由例句反推**（:mod:`app.core.routing.derive`），
+  内容也从"词"变成"片段集合"，故 :func:`has_business_noun` 改用
+  :func:`app.core.routing.similarity.contains_any` 而不是拼一条 200 多分支的正则。
+
 判据函数一律**显式接收** ``vocab``，**不设默认值**：没有默认值，就没有
 "悄悄用了错误词表"这种可能。上层（anchors / fusion / router）负责传下来，
 默认取 ``catalog.vocabulary()``。
@@ -49,6 +61,7 @@ import re
 from functools import lru_cache
 from typing import Callable, Dict, Optional, Tuple
 
+from app.core.routing import similarity
 from app.core.routing.vocabulary import Vocabulary
 
 # ---------------------------------------------------------------------------
@@ -100,12 +113,25 @@ def _identifier_re(patterns: Tuple[str, ...]) -> Optional[re.Pattern]:
     return re.compile("|".join(patterns))
 
 
-#: 索取结构的"尾巴"：**只允许系词与数量词**。这是汉语语法，不是业务词。
+#: 索取结构的"尾巴"：**系词 + 疑问词（+ 量词）**。这是汉语语法，不是业务词。
 #:
 #: 这是本模块最关键的一处约束。放开成"任意短尾巴"之后，
 #: 「公司的邮箱怎么申请」会命中（对象=公司、属性=邮箱、尾巴=怎么申请），
 #: 于是一条制度类问题被误送进工具通道——而那正是本设计要修的 bug 之一。
-_PERSON_ATTR_TAIL = r"(?:\s*(?:是多少|是什么|是啥|是几|有多少|多少|叫什么|呢|吗))*\s*[?？]?\s*$"
+#:
+#: 写成「系词 × 疑问词 × 量词」三段而不是把「是多少 / 是什么 / 是谁 / 是哪天…」
+#: 一条条列举：**列举是开集，语法是闭集**。上一版漏了「是谁」「是哪天」「是几号」，
+#: 于是「李四的直属领导是谁」这条最普通的问法压根锚不到——症状是"它掉到后面楼层
+#: 去了"，没有任何报错。改成三段之后，任何"X 的 Y 是谁/是多少/是哪天"都自然覆盖。
+#:
+#: 三段**整体可选**：`赵六的入职时间` 这类不带疑问词的写法同样是取值句。
+_COPULA = r"是|在|属于|有|为|叫|算"
+_MEASURE = r"号|天|个|次|位|名|时|年|月|日|分|点|块|元|岁|条|张"
+_INTERROGATIVE = r"多少|多长|多久|几|什么|啥|谁|哪|哪个|哪個|哪里|哪儿|哪天|何时"
+_PERSON_ATTR_TAIL = (
+    r"(?:\s*(?:" + _COPULA + r")?\s*(?:" + _INTERROGATIVE + r")(?:" + _MEASURE + r")?)?"
+    r"\s*(?:呢|吗|啊)?\s*[?？。!！\s]*$"
+)
 
 #: 抽取出的对象槽里可能混进的**礼貌前缀**。
 #:
@@ -141,6 +167,49 @@ def looks_like_person_attr_query(query: str, vocab: Vocabulary) -> bool:
     **写成抽取的派生**，由构造保证不可能与 :func:`extract_person_attr_slot` 漂移。
     """
     return extract_person_attr_slot(query, vocab) is not None
+
+
+#: 属性槽的最大长度。**只约束"反推词表"这条路径**，不约束上面那条正式判据。
+#:
+#: 反推出的属性词要进 :attr:`Vocabulary.attr_words`，而那个词表是**判据本身**
+#: （它一宽，误命中立刻回来）。所以这里取"宁窄勿宽"：超过 4 字的候选一律不要，
+#: 因为 5 字以上的片段几乎必然是"属性 + 尾巴"粘在了一起
+#: （离线实测：无约束的 ``公司的邮箱怎么申请`` 会抽出 ``邮箱怎么申请`` 这类 6 字垃圾）。
+#: 真需要更长的属性词，直接把它写进 ``catalog`` 的 ``attr_words`` 即可。
+FREE_ATTR_MAX = 4
+
+
+@lru_cache(maxsize=1)
+def _free_attr_re() -> re.Pattern:
+    """同一套句式，但**属性槽不受词表约束**——属性槽的边界由尾巴定界。
+
+    这条正则的用途只有一个：**从例句反推属性词表**（:mod:`app.core.routing.derive`）。
+    它天生过宽（``公司的邮箱怎么申请`` 会被抽出属性槽 ``邮箱``），
+    所以只允许喂给它**人工挑选过的正例**，绝不能用它做判据。
+    自测见 ``tests/test_routing_funnel.py`` 里那条"反推词表不得误命中负样本"的用例。
+    """
+    return re.compile(
+        r"(?:[\u4e00-\u9fa5A-Za-z0-9]{0,8}?\s*(?:是|在|属于)?\s*(?:哪个|哪個|什么|啥)\s*)"
+        r"(?P<attr>[\u4e00-\u9fa5A-Za-z0-9]{1," + str(FREE_ATTR_MAX) + r"}?)"
+        + _PERSON_ATTR_TAIL
+        + r"|(?:[\u4e00-\u9fa5A-Za-z0-9]{1,8}\s*的\s*)"
+        r"(?P<attr2>[\u4e00-\u9fa5A-Za-z0-9]{1," + str(FREE_ATTR_MAX) + r"}?)"
+        + _PERSON_ATTR_TAIL,
+        re.I,
+    )
+
+
+def person_attr_slot_of(query: str) -> Optional[str]:
+    """抽出「X 的 <属性>」/「X 在哪个 <属性>」里的**属性槽**（不查词表）。
+
+    返回 ``None`` 表示这句话没有这个句式。**这是反推工具，不是判据**：
+    任何"这句话属于某意图"的判断都必须走 :func:`looks_like_person_attr_query`
+    （带词表）或词面相似度层，不能拿它代替。
+    """
+    match = _free_attr_re().search(query or "")
+    if not match:
+        return None
+    return (match.group("attr") or match.group("attr2") or "").strip()
 
 
 def has_explicit_identifier(query: str, vocab: Vocabulary) -> bool:
@@ -198,18 +267,34 @@ def is_howto_query(query: str, vocab: Vocabulary) -> bool:
 
 
 def has_policy_context(query: str, vocab: Vocabulary) -> bool:
-    """是否在问**规范本身**（含规范名词，且不含人属性索取结构）。
+    """**已废弃的 guard 名，保留只为让旧配置报错而不是静默失效。**
 
-    规范名词表来自领域词表：企业域是"制度/规定/政策"，医疗域可能是
-    "诊疗规范/操作指南"。引擎不认识它们，只负责把词表拼成正则。
+    第一版用它拦「含规范名词的问题不该被 ``employee_attr`` 抢走」。改成与例句做
+    n-gram 相似度之后这件事由**例句本身**完成（负样本就写在它该去的那条能力里），
+    于是它成了一张多余的手写名词表。留着它会让"引擎里还藏着企业域的词"这件事
+    无法被测试证伪。
+
+    ⚠️ 它现在**恒为 False**：不是"暂时关掉"，而是职责已被取代。
+    任何 ``guards`` 里还写着 ``policy_context`` 的目录都能通过启动校验，
+    但那个 guard 不再起作用——这条注释就是它唯一的痕迹。
     """
-    nouns = tuple(vocab.policy_nouns)
-    if not nouns:
+    return False
+
+
+def has_business_noun(query: str, vocab: Vocabulary) -> bool:
+    """句中是否含**任何**业务片段。用于越狱判据的**反向**保护。
+
+    词表来源变了：不再是手写的"业务词"，而是
+    :func:`app.core.routing.derive.derive_business_nouns` 从例句反推出的**片段集合**
+    （本仓库是 257 个）。所以这里不能拼正则，改用集合求交——
+    200+ 分支的正则编译开销与可读性都不可接受，而且每加一句例句都要重编译。
+
+    ⚠️ 这个判据的方向是**宽进**：多认一个片段只会让一次越狱落到层④ 继续判（安全），
+    少认一个才会误拦正常业务问题（不可逆）。所以反推规则刻意偏向"宁可多认"。
+    """
+    if not vocab.business_nouns:
         return False
-    text = query or ""
-    if not re.search(_alternation(nouns), text):
-        return False
-    return not looks_like_person_attr_query(text, vocab)
+    return bool(similarity.contains_any(query or "", vocab.business_nouns))
 
 
 def is_comparison_query(query: str, vocab: Vocabulary) -> bool:
@@ -224,16 +309,13 @@ def is_comparison_query(query: str, vocab: Vocabulary) -> bool:
     return not looks_like_person_attr_query(text, vocab)
 
 
-def has_business_noun(query: str, vocab: Vocabulary) -> bool:
-    """句中是否含**任何**业务名词。用于越狱判据的**反向**保护。"""
-    nouns = tuple(vocab.business_nouns)
-    if not nouns:
-        return False
-    return bool(re.search(_alternation(nouns), query or ""))
-
-
 #: guard 名 → 判据函数。函数签名统一为 ``(query, vocab) -> bool``。
 #: ``catalog`` 里声明的 guard 名必须在这里能解析到，否则启动期校验直接 raise。
+#:
+#: ``policy_context`` 从前也在这里，现已是恒假的占位（见 :func:`has_policy_context`）。
+#: 保留名字**而不是删掉**：删掉之后，一份还写着它的老目录会在启动期报
+#: "guard 未定义"——那条报错说的是"拼错了"，而真实原因是"它被取代了"，
+#: 两者该给的提示完全不同。留着它，老目录照常启动，只是那个 guard 不再起作用。
 GUARD_FUNCS: Dict[str, Callable[[str, Vocabulary], bool]] = {
     "howto": is_howto_query,
     "policy_context": has_policy_context,

@@ -45,7 +45,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from app import config
-from app.core.routing import catalog, signals, vocabulary
+from app.core.routing import catalog, signals, similarity, vocabulary
 from app.utils.logger import logger
 
 
@@ -64,7 +64,9 @@ class Scored:
     name: str
     channel: str
     score: float
-    #: 词面命中的关键词，用于预演接口与排障（"它凭什么得这个分"）。
+    #: 词面得分是"与例句的相似度"，所以这里记的是**最像的那一条例句**
+    #: （单元素元组；被打分函数清零时为空）。用于预演接口与排障：
+    #: "它凭什么得这个分"的答案就是这一条例子，直接可操作。
     hits: Tuple[str, ...] = ()
 
 
@@ -170,26 +172,44 @@ def score_lexical(
     specs: Optional[Sequence[catalog.IntentSpec]] = None,
     vocab: Optional[vocabulary.Vocabulary] = None,
 ) -> List[Scored]:
-    """词面打分：``Σ len(命中关键词)``。
+    """词面打分：query 与每个能力的**例句**取最大字面相似度。
 
-    **长词权重更高**是有意的：专名（"入职时间""假期余额"）比通用词
-    （"部门""流程"）更能说明意图，而"张三"与"张伟"在向量空间几乎重合——
-    专名靠词面远比靠向量准。这实现为"权重 = 词长"，不需要额外的权重表。
+    **为什么不是"命中关键词表"**（第一版的做法，2026-09-16 换掉）
+    ------------------------------------------------------------
+    ``Σ len(命中关键词)`` 有三个结构性缺陷，都不是"词表抄得不够全"：
 
-    ⚠️ "权重 = 词长"也正是它的**固有偏向**：一个意图穷举了更多宾语词
-    （"年假" + "调休"）就会压过另一个只命中提问意图词（"区别"）的意图。
-    这类漏判调权重治不好（没有可调参数），要靠句式 guard 去否定错的意图——
-    但 guard 只该为**这一类**问题而加，不要为单个句子量身定做。
+    1. **闭集追不上开集**。词表写了"分机号"，用户说"座机"就漏。补词只能追着漏判跑。
+    2. **穷举宾语的能力被系统性抬高**。"年假"+"调休"（4.0）压过真正表达提问意图的
+       "区别"（2.0）——*提到两个宾语比在问两者的关系得分更高*。权重就是词长，
+       没有可调参数，治不好。
+    3. **它制造第二份事实来源**。``keywords`` 与 ``utterances`` 描述同一件事，
+       不一致时没有任何一处会报错。
+
+    改成"与例句比字面相似度"之后三条一起消失，而且有个额外好处：
+    **命中的是某一条具体例句**（``Scored.hits``），排障时直接知道该改哪一条，
+    而"命中了哪几个词"是没法直接操作的。算法与取舍见
+    :mod:`app.core.routing.similarity`。
+
+    ⚠️ 量纲变了：分数域从"关键词长度之和"（0~20+）变成 Dice 系数 ∈ [0, 1]。
+    承载它的阈值 ``ROUTE_LEXICAL_FLOOR`` / ``ROUTE_LEXICAL_MARGIN`` 必须一起改，
+    否则会出现"地板永远通过"（旧值 3.0 对新的 0~1 分数而言是不可达的）——
+    那是一类**不报错的失效**：所有灰区判定形同虚设。
     """
-    text = (query or "").strip().lower()
     vocab = vocab if vocab is not None else catalog.vocabulary()
     out: List[Scored] = []
     for spec in (specs if specs is not None else catalog.all_specs()):
         if guard_fired(spec, query, vocab):
             out.append(Scored(spec.name, spec.channel, 0.0, ()))
             continue
-        hits = tuple(kw for kw in spec.keywords if kw.lower() in text)
-        out.append(Scored(spec.name, spec.channel, float(sum(len(kw) for kw in hits)), hits))
+        best = similarity.best_match(query or "", spec.utterances)
+        out.append(
+            Scored(
+                spec.name,
+                spec.channel,
+                best.score,
+                (best.example,) if best.example else (),
+            )
+        )
     return out
 
 

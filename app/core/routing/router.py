@@ -255,6 +255,18 @@ def match_intent(
             text, result.ranked, model=model,
             timeout_ms=_clamp_timeout(config.ROUTE_ARBITRATION_TIMEOUT_MS, left),
         )
+        if picked == arbitration.ABSTAIN:
+            # 模型明确说"没有一条候选说得通"。这是**结论**，不是故障：
+            # 候选清单是闭集，越界请求是开集，逼它在闭集里挑最像的只会挑出一个错的
+            # （实测「帮我写一首诗」曾被判成 identity，用户收到的是一段自我介绍）。
+            # 所以闭集必须显式留一个"不在集合里"的出口，走到这里就如实拒答。
+            logger.info("路由灰区仲裁：判定越界（候选都不匹配）")
+            return _decision(
+                channel=SCENE_OUT_OF_SCOPE, capability=None, source=SOURCE_ARBITRATION,
+                started=started, reason=f"灰区仲裁（{gray_reason}）→ 候选都不匹配，判越界",
+                degraded=degraded, gray_reason=gray_reason, gate=result,
+                semantic_attempted=semantic_attempted,
+            )
         if picked is not None:
             spec = catalog.spec_by_name(picked)
             channel = spec.channel if spec else DEFAULT_SCENE
@@ -360,7 +372,6 @@ def describe_catalog() -> List[dict]:
             "name": s.name,
             "channel": s.channel,
             "description": s.description,
-            "keywords": list(s.keywords),
             "utterances": list(s.utterances),
             "guards": list(s.guards),
             "anchors": list(s.anchors),
