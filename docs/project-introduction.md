@@ -646,7 +646,16 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 "区别" 2.0）。现在一律拿整句去比例句，于是：`keywords` 字段被**删除**，
 领域词表（属性词 / 业务片段）改由 `derive.py` 从例句**反推**，
 新增一个项目只需要写例句与描述。离线实测（29 条探针问句，关掉语义与仲裁两层）：
-**9/29 → 20/29**，且零回归。
+**9/29 → 20/29**，且零回归。**这个数字是可复现的**——
+探针已入库为 `scripts/probe_routing.py`（零 LLM，不消耗配额）：
+
+```bash
+PYTHONPATH=. ROUTE_SEMANTIC_ENABLED=false ROUTE_ARBITRATION_ENABLED=false \
+    ./.venv/bin/python scripts/probe_routing.py
+```
+
+它按五组汇报未达预期项（`catalog` 是回归基线，掉一条就是弄坏了；
+`paraphrase` 是泛化能力，掉一条多半是阈值太紧）。**它是探针不是门禁**，退出码恒 0。
 
 **闭集必须留一个"不在集合里"的出口。** ④ 的候选清单末尾固定追加一项
 "以上都不是"。没有它时提示词写的是"只能从中选一个"，而**模型必须挑一条**——
@@ -1890,7 +1899,7 @@ open http://127.0.0.1:8001/static/index.html
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（5 项发现 = 豁免清单 5 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 14 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 519 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 521 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -1919,6 +1928,7 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/check_vector_db.py` | 307 | **向量库连接自检：配置解析 + 连通性 + 读写往返（探针走临时集合，不碰生产数据）** |
 | `scripts/verify_milvus_lite.py` | 123 | **在真实 Milvus 引擎（Lite，免 Docker）上验证向量库适配器** |
 | `scripts/module_inventory.py` | 83 | 模块清单 |
+| `scripts/probe_routing.py` | 214 | **意图路由探针（29 条问句，分五组）**：零 LLM 跑出判对率，给「改打分/调阈值」提供可复现的 A/B 基线；**是探针不是门禁**，退出码恒 0 |
 
 ---
 
@@ -1987,9 +1997,9 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/check_vector_db.py` | 307 | `scripts/chunk_metrics.py` | 171 |
 | `scripts/chunking_ab.py` | 326 | `scripts/deadcode_scan.py` | 904 |
 | `scripts/eval_generation.py` | 90 | `scripts/fix_doc_linenos.py` | 183 |
-| `scripts/module_inventory.py` | 83 | `scripts/refgraph_scan.py` | 607 |
-| `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 503 |
-| `scripts/verify_milvus_lite.py` | 123 | | |
+| `scripts/module_inventory.py` | 83 | `scripts/probe_routing.py` | 214 |
+| `scripts/refgraph_scan.py` | 607 | `scripts/seed_enterprise_db.py` | 142 |
+| `scripts/verify_doc_linenos.py` | 503 | `scripts/verify_milvus_lite.py` | 123 |
 
 ### 附录 B：数据与配置
 
@@ -2008,7 +2018,7 @@ open http://127.0.0.1:8001/static/index.html
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **519 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+它对本文的 **521 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
 覆盖十类写法：
 
 | # | 声明类型 | 例子 |
@@ -2027,7 +2037,7 @@ python scripts/verify_doc_linenos.py
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：519 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：521 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 

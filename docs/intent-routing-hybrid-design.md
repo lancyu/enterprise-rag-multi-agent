@@ -1553,6 +1553,27 @@ def validate_catalog(specs) -> None:
 新修好的 11 条里，值得单独看的是 `王五的座机是多少`——它是**"加例句"而非"加词"**修好的，
 也是"这个模块拿到别的项目依然可扩展"这句话最直接的证据。
 
+**这组数字是可复现的**，不是叙事。探针已入库为 `scripts/probe_routing.py`
+（**零 LLM、不消耗配额**，所以结果可重复）：
+
+```bash
+# 改造后
+PYTHONPATH=. ROUTE_SEMANTIC_ENABLED=false ROUTE_ARBITRATION_ENABLED=false \
+    ./.venv/bin/python scripts/probe_routing.py
+
+# 改造前（A/B 基线）—— 挂旧提交，不用复制 venv
+git worktree add /tmp/routing-baseline 028ff16
+cd /tmp/routing-baseline && ROUTE_SEMANTIC_ENABLED=false ROUTE_ARBITRATION_ENABLED=false \
+    "$OLDPWD/.venv/bin/python" "$OLDPWD/scripts/probe_routing.py"
+git worktree remove /tmp/routing-baseline --force
+```
+
+> **为什么要专门开一个脚本**：本文（以及 `project-introduction.md`）里
+> 「9/29 → 20/29」这类是**自我指涉数字**——没有可复现的载体，它就只是叙事。
+> 本项目已经因为这类数字栽过多次（测试条数、行号声明数、自检项数，
+> 三者都只能人工核对且总会过期）。**把探针写进 `scripts/` 之后，
+> 那个数字至少能被证伪。**
+
 剩下 9 条全是"换个说法问制度"与越界类，按设计**本就该交给 ②b 语义层 / ④ 仲裁层**，
 不是词面层该解决的。开仲裁后探针一度到 **27 / 29**；后续复测被测试账号的
 限流（RPM=3，服务端会 hold 住连接而不报 429）稀释，**该数字只在无干扰窗口内可信**。
