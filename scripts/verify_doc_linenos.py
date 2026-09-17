@@ -622,14 +622,19 @@ def verify(doc_path: str) -> list[str]:
     # --- app/config.py 的「配置分区」表（第 13 类）---
     # 判据与理由见 `config_partition_spans` 上方注释。它不增加 counted（第 9 类已计过）。
     real_parts = config_partition_spans()
-    if real_parts:
+    # 本类只对「有一节在讲 config.py 分区」的文档生效——判据是存在
+    # `#### 📍 app/config.py` 小标题。**不能反过来要求「所有文档都有这张表」**：
+    # 校验器也能手动指定别的文档，那些文档本来就不该有这张表（实测踩过：
+    # 拿审查报告去跑，会被「找不到定位标记」误报）。
+    # 但对**有这一节**的文档，「找不到标记」就必须报错——否则改掉那行小标题
+    # 就会让本类悄悄退化成空转，而门禁照样是绿的（护栏恒真）。
+    config_section = [l for l in lines if _MODULE_HEAD_RE.match(l) and "config.py" in l]
+    if real_parts and config_section:
         mark = next((i for i, line in enumerate(lines) if _CONFIG_TABLE_MARK in line), None)
         if mark is None:
-            # 找不到定位标记**必须报错**，不能静默跳过：否则改掉那行小标题
-            # 就会让本类悄悄退化成空转，而门禁照样是绿的（护栏恒真）。
             problems.append(
-                f"找不到配置分区表的定位标记「{_CONFIG_TABLE_MARK}」——"
-                f"若是有意改名，请同步更新本类；否则本类已失效"
+                f"本文有 `#### 📍 app/config.py` 小节，却找不到配置分区表的定位标记"
+                f"「{_CONFIG_TABLE_MARK}」——若是有意改名，请同步更新本类；否则本类已失效"
             )
         else:
             rows: list[tuple[int, int, int]] = []

@@ -21,6 +21,7 @@
 | [`deployment.md`](deployment.md) | 部署与运维手册，**含"它不能怎么跑"** | 上线 / 排障 |
 | [`chunking-contract.md`](chunking-contract.md) | 切分契约。**违反「冻结项」= 破坏性变更** | 改切分逻辑前必读 |
 | [`dify-integration.md`](dify-integration.md) | Dify External Knowledge API 接入契约 | 接 Dify 时 |
+| [`project-review-and-improvement-plan.md`](project-review-and-improvement-plan.md) | **全面审查（2026-09-17 时点快照）**：目录 / 职责与重复实现 / 依赖环 / 数据流 / 同类项目对标 / 与标准 RAG 的差距 + P0~P2 改进清单 | 要动结构或做优化前，先看这份找依据 |
 
 > ⚠️ `project-introduction.md` 的行号由 `scripts/verify_doc_linenos.py` 校验，
 > **改 `app/` 下任何文件的行数都会让它过期**。流程见该文档自身说明。
