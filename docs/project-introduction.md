@@ -1957,7 +1957,7 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/chunking_ab.py` | 326 | 切分策略 A/B 对比 |
 | `scripts/chunk_metrics.py` | 171 | 切分质量指标 |
 | `scripts/baseline_snapshot.py` | 133 | 冻结基线快照 |
-| `scripts/eval_generation.py` | 90 | 生成侧离线评测 |
+| `scripts/eval_generation.py` | 91 | 生成侧离线评测 |
 | `scripts/verify_doc_linenos.py` | 503 | **校验本文行号是否因代码改动而失效（十类声明）** |
 | `scripts/check_vector_db.py` | 307 | **向量库连接自检：配置解析 + 连通性 + 读写往返（探针走临时集合，不碰生产数据）** |
 | `scripts/verify_milvus_lite.py` | 123 | **在真实 Milvus 引擎（Lite，免 Docker）上验证向量库适配器** |
@@ -2030,7 +2030,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_vector_store_backends.py` | 381 | `scripts/baseline_snapshot.py` | 133 |
 | `scripts/check_vector_db.py` | 307 | `scripts/chunk_metrics.py` | 171 |
 | `scripts/chunking_ab.py` | 326 | `scripts/deadcode_scan.py` | 904 |
-| `scripts/eval_generation.py` | 90 | `scripts/fix_doc_linenos.py` | 183 |
+| `scripts/eval_generation.py` | 91 | `scripts/fix_doc_linenos.py` | 183 |
 | `scripts/module_inventory.py` | 83 | `scripts/probe_routing.py` | 214 |
 | `scripts/refgraph_scan.py` | 607 | `scripts/seed_enterprise_db.py` | 142 |
 | `scripts/verify_doc_linenos.py` | 503 | `scripts/verify_milvus_lite.py` | 123 |

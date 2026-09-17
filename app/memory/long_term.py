@@ -19,7 +19,7 @@ from app import config
 from app.memory.store import MemoryStore
 from app.utils.logger import logger
 
-# 规则化事实抽取：Dream 不可用（限频 / 无 Key）时的降级路径
+# 规则化事实抽取：Dream 不可用（无 Key / 模型调用失败）时的降级路径
 _NAME_PATTERNS = [
     re.compile(r"我(?:叫|是|的名字是)\s*([^\s，。,.!！?？]{1,20})"),
     re.compile(r"你可以?叫我\s*([^\s，。,.!！?？]{1,20})"),
@@ -140,7 +140,7 @@ class LongTermMemory:
     def extract_facts_by_rules(text: str) -> Dict[str, List[str]]:
         """从对话文本中规则化抽取用户名、偏好与事实。
 
-        这是 Dream 的降级路径：没有可用的大模型（或限频严重）时，
+        这是 Dream 的降级路径：没有可用的大模型（未配 Key 或调用失败）时，
         仍能捕获「我叫张三」「我喜欢简洁回答」这类高价值显式陈述。
         规则抽取只处理用户主动说出的显式信息，不做任何推断。
         """

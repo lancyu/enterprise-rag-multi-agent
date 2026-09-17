@@ -16,8 +16,9 @@
 
     PYTHONPATH=. .venv/bin/python scripts/eval_generation.py
 
-注意：会真实调用大模型（每条用例一次）。免费档账号 RPM 极低时，
-请保留 ``--sleep`` 间隔，否则大部分请求会撞 429。
+注意：会真实调用大模型（每条用例一次），有真实耗时与成本。默认**不插入静默间隔**
+—— 「每条之间等 20 秒」是为当年那个限频账号定的，前提早已不存在，留着它只是白等。
+若你的账号确有频率上限、日志里出现 429，再用 ``--sleep`` 拉开节奏。
 """
 import argparse
 import time
@@ -29,8 +30,8 @@ from app.rag.generator import generate_answer
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="生成侧离线评测")
-    parser.add_argument("--sleep", type=float, default=20.0,
-                        help="每条用例之间的间隔秒数（规避上游 RPM 限制，默认 20s）")
+    parser.add_argument("--sleep", type=float, default=0.0,
+                        help="每条用例之间的间隔秒数（默认 0；账号有频率上限、出现 429 时再调大）")
     parser.add_argument("--limit", type=int, default=0, help="只跑前 N 条（0=全部）")
     args = parser.parse_args()
 

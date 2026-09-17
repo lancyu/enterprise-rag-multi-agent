@@ -5,7 +5,7 @@
 - **O2 零成本结构指标**（默认即跑）：块数 / 平均块长 / 跨章率 / 索引膨胀 / 章节覆盖率 /
   块长分布。全部来自本地切分结果，不调用任何 embedding API，秒级完成。
 - **O3 检索评测**（--full 才跑）：真实调用 embedding 跑 run_retrieval_eval，对比
-  hit_rate / MRR / section_hit_rate。受账号 RPM=3 限流影响会较慢，分批执行。
+  hit_rate / MRR / section_hit_rate。每条用例一次真实 embedding 调用，会较慢。
 
 实验组：
   A   recursive            （基线，改造前行为）
@@ -179,7 +179,7 @@ def scan_grid(baseline_count: int = 124, verbose: bool = True) -> List[dict]:
 
 
 def _o3_retrieval_eval(strategy: str, header: bool, meta: bool) -> dict:
-    """O3：真实 embedding 检索评测（受 RPM 限流影响，可能较慢）。"""
+    """O3：真实 embedding 检索评测（每条用例一次远端调用，可能较慢）。"""
     from app.rag import evaluator as E
     indexer.config.CHUNK_STRATEGY = strategy
     indexer.config.CHUNK_CONTEXT_HEADER = header
@@ -278,7 +278,7 @@ def _save_report(path: str, a: ChunkStat, d: ChunkStat, infl: float, o3, scan_ro
         ]
     else:
         lines += [
-            "_未运行（O3 需真实 embedding，受 RPM 限流影响较慢）。_",
+            "_未运行（O3 需真实 embedding，逐条远端调用较慢）。_",
             "运行：`python scripts/chunking_ab.py --full --save docs/history/chunking-ab-report.md`",
         ]
 
