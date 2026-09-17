@@ -6,7 +6,7 @@
 但**代码一改行号就漂移**，而文档不会报错、只会悄悄变错。
 靠人肉复核几百条声明不现实，所以把复核本身自动化。
 
-它校验十一类声明
+它校验十二类声明
 ----------------
 1. **符号行号**：表格里 ``| `func_name` | 120-145 |`` 形式的行，
    用 AST 取该符号真实的 ``lineno`` / ``end_lineno`` 比对。
@@ -39,14 +39,27 @@
     实测：补上它之后声明数 522 → 557（**此后文档自身还会新增声明，总数以运行输出为准**），
     并立刻多抓出 2 处同型漂移（`retriever.py::_attach_parent_content`、
     `generator.py::estimate_confidence`）。
+12. **区间式引用**：`` `GraphState`（50-126）``、`` `config.py:370-379` ``、
+    `` `_read_limited:31-50` ``、表格里 `` | `knowledge.py` | 上传 `79-138` | ``。
+    与第 11 类同源（都在「文件名/符号名与数字的邻接方式」上越出正则的假设），
+    区别是第 11 类漏的是**没有括号**的写法，本类漏的是**带括号或带冒号**的。
+    判据：区间须恰好等于该文件里**某个**符号的 AST 跨度（不是「被点名的那个符号」，
+    理由见 `_R12_SYM_PAREN_RE` 的注释）；`` `符号:单行号` `` 这种单数字则要求
+    **必须点名符号**。实测：声明数 558 → 598（+36 由本类新覆盖，
+    +4 是文档自身新增的示例——总数以运行输出为准），并抓出 5 处错值
+    （`state.py::GraphState`、`create_initial_state`、`indexer.py::_merge_short_chunks`
+    差一行、`config.py` 两处裸区间指向了隔壁小节）。
 
-第 3～11 类都是**后来补齐的盲区**。共同的教训是：
+第 3～12 类都是**后来补齐的盲区**。共同的教训是：
 校验器只覆盖了它「认得出」的写法，认不出的写法会静默通过，
 于是「全部一致」这个结论本身是可疑的——**先把覆盖面补全，再去改文档**。
 第 3～10 类补的都是「文档里**有**某种写法但没人校验」；
 第 11 类不同，它补的是**一个结构性前提**：前十类都建立在「行里有文件名」之上，
 而文档里有整整一类引用是靠小标题继承上下文的。**补覆盖面时别只看正则，
 要看它隐含的前提。**
+第 12 类把这条教训又推进了一步：**同一批「没人校验」的写法，往往是被同一个前提
+一次性漏掉的**——找到一个（第 11 类）之后，就该顺着这个前提把同族写法一次清干净，
+而不是等下一轮再发现另一半。
 另外两条教训见 ``_SECTION_DIR_RE`` 与 ``_ROW_RE`` 的注释：
 正则重名会让上下文继承静默失效（把正确声明报成错误）；
 文件名模式漏掉 ``/`` 会让整行被静默跳过（把过期声明放过去）。
@@ -140,6 +153,31 @@ _STRICT_TOTAL_RE = re.compile(r"^\s*\**\d+\s*-\s*\d+\**\s*$")
 #: 「区域行号表」的裸区间行：``| 178-204 | 向量数据库配置（…）|``。
 #: 这类行既没有文件名也没有符号名，只能靠最近的 `#### 📍 <文件>` 标题定位。
 _BARE_RANGE_RE = re.compile(r"^\|\s*(\d+)\s*-\s*(\d+)\s*\|")
+#: 第 12 类：**区间式引用**。同一条判据下的四种写法（文件从上下文或同行继承）::
+#:
+#:     `GraphState`（10-63）                    ← 符号 + 全/半角括号区间
+#:     `config.py:265-275`                      ← 裸文件名（无 app/ 前缀）+ :区间
+#:     `_read_limited:31-50`                    ← 符号 + :区间（夹在句子里）
+#:     | `knowledge.py` | 上传 `79-138`、… |     ← 表格行首是裸文件名，描述里是匿名区间
+#:
+#: 判据：区间**须恰好等于目标文件里某个符号的 AST 跨度**。
+#: 刻意不写成「被点名的那个符号必须正好是这个跨度」——两处实测的反例：
+#: `` `ttft_ms`（45-79）`` 里被点名的是 `StreamStats` 的**字段**，45-79 指它所在的类；
+#: `` `logger.py`：`TraceIdFilter`（14-28）`` 的文件名写在**行内**而非小标题里。
+#: 这两种按名字严格比对都会误报，所以口径统一放宽为「某个符号恰好是这个跨度」，
+#: 代价是「名字写错但跨度巧合」会漏判——沿用第 6 类的取向：**宁可漏判不可误判**。
+_R12_SYM_PAREN_RE = re.compile(
+    r"`([A-Za-z_]\w*)`\**\s*[（(]\s*(\d+)\s*[-–~]\s*(\d+)\s*(?:[，,][^）)]{0,12})?[）)]"
+)
+#: 裸文件名 + :区间。负向断言排除带目录前缀的写法（``app/x.py:1-68`` 属第 7 类）。
+_R12_BARE_FILE_RE = re.compile(r"`(?![\w]+/)([\w]+\.(?:py|md)):(\d+)\s*[-–~]\s*(\d+)`")
+_R12_SYM_COLON_RE = re.compile(r"`([A-Za-z_]\w*):(\d+)\s*[-–~]\s*(\d+)`")
+#: `` `符号:单数字` ``（`` `_REBUILD_LOCK:19` ``）——判据与区间不同，见下面的检查段。
+_R12_SYM_COLON_LINE_RE = re.compile(r"`([A-Za-z_]\w*):(\d+)`")
+_R12_TABLE_ROW_RE = re.compile(r"^\|\s*`([A-Za-z_][\w.]*\.py)`\s*\|(.*)\|\s*$")
+_R12_ANON_RANGE_RE = re.compile(r"`(\d+)\s*[-–~]\s*(\d+)`")
+#: 行内显式文件名（`` `logger.py`：… ``）——比小标题继承更可靠，优先采信。
+_R12_INLINE_FILE_RE = re.compile(r"`([\w]+\.py)`")
 #: 通用文件行数声明：`` `README.md`（362 行）``、``Dockerfile``（35 行）``，
 #: 以及 §2.1 架构图里**没加反引号**的 ``app/config.py（583 行）``。
 #: 这类声明横跨 .py / .md / .yml / .txt，且不在 `app/` 下，此前完全没被覆盖。
@@ -447,6 +485,87 @@ def verify(doc_path: str) -> list[str]:
                     f"L{lineno}: {ctx_file}::{sym} 文档写第 {start} 行，"
                     f"AST 实为 {sorted(set(spans))}"
                 )
+
+    # --- 区间式引用（第 12 类，四种写法共用一个判据）---
+    # 与第 11 类同源：都是在「文件名/符号名与数字的邻接方式」上越出了正则的假设。
+    # 第 11 类漏的是**没有括号**的单数字 / 裸区间；本类漏的是**带括号或带冒号**的区间，
+    # 以及在表格里被拆成「行首文件名 + 描述里匿名区间」的那种。
+    # 实测：补上第 11 类后，这四种写法里仍有 38 处声明无人校验，其中 5 处是错值。
+    ctx_dir = ctx_file = None
+    for lineno, line in enumerate(lines, 1):
+        m = _SECTION_DIR_RE.match(line)
+        if m:
+            ctx_dir = m.group(1) if m.group(1).endswith("/") else m.group(1) + "/"
+            continue
+        m = _MODULE_HEAD_RE.match(line)
+        if m:
+            ctx_file = resolve(m.group(1), ctx_dir)
+            continue
+
+        # 表格行：行首单元格就是这一行**所有**引用的文件（``| `knowledge.py` | … |``）。
+        # 优先级最高——它比小标题精确，也比行内零散出现的文件名可靠。
+        # （踩过：同一行里 `` `_read_limited:31-50` `` 曾被小标题的 `chat.py` 抢走，
+        # 于是把正确的 31-50 误报成错值。）
+        row = _R12_TABLE_ROW_RE.match(line)
+        row_file = resolve(row.group(1), ctx_dir) if row else None
+        # 行内显式文件名（`` `logger.py`：`TraceIdFilter`（14-28）``）：句子的主语
+        # 可能是小标题没写到的另一个文件，优先于小标题继承。
+        inline = _R12_INLINE_FILE_RE.search(line)
+        inline_file = resolve(inline.group(1), ctx_dir) if inline else None
+        base = row_file or inline_file or ctx_file
+
+        cands: list[tuple[str | None, str | None, int, int, bool]] = []
+        for sym, start, end in _R12_SYM_PAREN_RE.findall(line):
+            cands.append((base, f"`{sym}`", int(start), int(end), False))
+        for name, start, end in _R12_BARE_FILE_RE.findall(line):
+            cands.append((resolve(name, ctx_dir), name, int(start), int(end), False))
+        for sym, start, end in _R12_SYM_COLON_RE.findall(line):
+            cands.append((base, f"`{sym}`", int(start), int(end), False))
+        for sym, single in _R12_SYM_COLON_LINE_RE.findall(line):
+            cands.append((base, f"`{sym}`", int(single), int(single), True))
+        # 行首单元格是符号名（第 1 类）或格子里已有命名引用（第 6/8 类）的行，
+        # 交给它们，避免同一处被报两遍。
+        # name 传 None：这类区间在原文里是匿名的，报错措辞要跟着换
+        # （否则会说出「app/api/knowledge.py 的 knowledge.py」这种把文件名讲两遍的话）。
+        if row and not _ROW_RE.match(line) and not _LOOSE_NAMED_RE.search(line):
+            for start, end in _R12_ANON_RANGE_RE.findall(row.group(2)):
+                cands.append((row_file, None, int(start), int(end), False))
+
+        for ref_file, name, start, end, single in cands:
+            if not ref_file:
+                continue                    # 文件解析不出（叙述性例子，如已删的 model_router.py）
+            total = totals.get(ref_file)
+            if total is None or not 1 <= start <= end <= total:
+                continue                    # 越界当普通数字看
+            bucket = symbols.get(ref_file, {})
+            if single:
+                # 单数字必须**点名符号**才敢认它是行号（`` `_REBUILD_LOCK:19` ``）：
+                # 不带名字的单数字无从判断是行号还是数值，一律不认。
+                # 这与区间口径的差异是刻意的——区间形态本身就罕见，且两端的数字
+                # 一眼就是行号，才敢匿名。
+                spans = bucket.get(name.strip("`"))
+                if not spans:
+                    continue
+                counted += 1
+                if start not in {s for s, _ in spans}:
+                    problems.append(
+                        f"L{lineno}: {ref_file}::{name} 文档写第 {start} 行，"
+                        f"AST 实为 {sorted(set(spans))}"
+                    )
+                continue
+            counted += 1
+            spans = {sp for d in bucket.values() for sp in d}
+            if (start, end) not in spans:
+                if name:
+                    problems.append(
+                        f"L{lineno}: {ref_file} 的 {name} 指向 {start}-{end}，"
+                        f"但该文件里没有符号恰好是这个跨度"
+                    )
+                else:
+                    problems.append(
+                        f"L{lineno}: {ref_file} 里没有任何符号恰好跨 {start}-{end}"
+                        f"（该行引用的文件由行首单元格提供）"
+                    )
 
     # --- 通用文件行数声明（含非 Python、含架构图里的无反引号写法）---
     # 解析不出候选或候选有歧义时**直接跳过**：宁可漏判不可误判。

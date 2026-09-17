@@ -424,7 +424,7 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 - `_env_bool`：统一认定 `0/false/no/off` 是假，避免每个模块各写一套判断。
 - `_env_list`：逗号切分并丢弃空项。
 
-`effective_score_threshold`（`config.py:265-275`）是个有意思的设计：
+`effective_score_threshold`（`config.py:370-379`）是个有意思的设计：
 检索阈值**按 embedding 模式自适应**。为什么？因为不同向量模型的分数尺度天差地别——
 OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 如果套一个固定阈值，换个模型检索就全空了。
@@ -437,7 +437,8 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 `SCORE_THRESHOLD` 用 `Optional`，`None` 有「未配置」的语义，**不能用 0 代替**——
 留空表示"按 embedding 模式自动选"，写 0 则表示"任何分数都不够"，两者天差地别。
 历史坑：有一批融合权重只在消费方用 `getattr(config, X, 默认值)` 读取，config 里根本没定义，
-导致改 `.env` 完全无效——现已在 `config.py:279-299` 补齐为真实配置。
+导致改 `.env` 完全无效——现已在 config 里补齐为真实配置（`RRF_K:398` / `DENSE_WEIGHT:399` /
+`LEXICAL_WEIGHT:400` 这一组就是），并把消费方从 `getattr` 兜底改成**运行时读取**。
 
 ---
 
@@ -528,7 +529,7 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 
 **⚠️ 关键陷阱**：`GraphState` 是 `TypedDict`，
 **没在这里声明的键会被 LangGraph 当作非法通道静默丢弃**。
-所以新增可观测字段必须**同时**改 `GraphState`（10-63）和 `create_initial_state`（66-98），
+所以新增可观测字段必须**同时**改 `GraphState`（50-126）和 `create_initial_state`（129-169），
 否则 API 层永远读到 `None`，而且不报错——比报错更难查。
 
 **为什么异常要分两条通道**：
@@ -1016,7 +1017,7 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 2. **单块超硬上限**——直接用递归切分器拆碎。
 3. **重叠固定为 0**——章节边界天然隔离语义，不需要靠重叠兜底。
 
-另外还有 `_merge_short_chunks`（81-120）治碎片：
+另外还有 `_merge_short_chunks`（82-121）治碎片：
 像"3. 考勤"这种只有标题没正文的块，向量化后是纯噪声、还会挤占 Top-K。
 规则是短于 40 字就"向前收养"拼进上一块。
 
@@ -1955,7 +1956,7 @@ open http://127.0.0.1:8001/static/index.html
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（5 项发现 = 豁免清单 5 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 558 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 598 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -1980,7 +1981,7 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/chunk_metrics.py` | 171 | 切分质量指标 |
 | `scripts/baseline_snapshot.py` | 133 | 冻结基线快照 |
 | `scripts/eval_generation.py` | 91 | 生成侧离线评测 |
-| `scripts/verify_doc_linenos.py` | 590 | **校验本文行号是否因代码改动而失效（十一类声明）** |
+| `scripts/verify_doc_linenos.py` | 709 | **校验本文行号是否因代码改动而失效（十二类声明）** |
 | `scripts/check_vector_db.py` | 307 | **向量库连接自检：配置解析 + 连通性 + 读写往返（探针走临时集合，不碰生产数据）** |
 | `scripts/verify_milvus_lite.py` | 123 | **在真实 Milvus 引擎（Lite，免 Docker）上验证向量库适配器** |
 | `scripts/module_inventory.py` | 83 | 模块清单 |
@@ -2055,7 +2056,7 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/eval_generation.py` | 91 | `scripts/fix_doc_linenos.py` | 183 |
 | `scripts/module_inventory.py` | 83 | `scripts/probe_routing.py` | 214 |
 | `scripts/refgraph_scan.py` | 607 | `scripts/seed_enterprise_db.py` | 142 |
-| `scripts/verify_doc_linenos.py` | 590 | `scripts/verify_milvus_lite.py` | 123 |
+| `scripts/verify_doc_linenos.py` | 709 | `scripts/verify_milvus_lite.py` | 123 |
 
 ### 附录 B：数据与配置
 
@@ -2074,8 +2075,8 @@ open http://127.0.0.1:8001/static/index.html
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **558 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
-覆盖十一类写法：
+它对本文的 **598 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+覆盖十二类写法：
 
 | # | 声明类型 | 例子 |
 |---|---|---|
@@ -2090,15 +2091,16 @@ python scripts/verify_doc_linenos.py
 | 9 | 区域行号表（裸区间） | `273-328` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:231-306` |
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
+| 12 | **区间式引用**（符号 + 括号 / 裸文件名 + 冒号 / 表格行首文件名 + 描述里匿名区间） | `state.py`：`GraphState`（50-126）、`config.py:370-379` |
 
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：558 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：598 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 
-> **为什么有十一类而不是三类？** 因为最初只覆盖了第 1～2 类，于是
+> **为什么有十二类而不是三类？** 因为最初只覆盖了第 1～2 类，于是
 > 附录整块（第 3 类）、章节小计（第 4 类）、模块标题（第 5 类）、
 > 区域表（第 9 类）全都**静默通过**。校验器只认它「认得出」的写法，
 > 认不出的写法不会报错、只会被跳过——所以「全部一致」这个结论，
@@ -2122,6 +2124,17 @@ python scripts/verify_doc_linenos.py
 > 立刻又抓出 2 处同型漂移（`retriever.py::_attach_parent_content`、
 > `generator.py::estimate_confidence`）。教训是：
 > **补覆盖面时别只看正则，要看它隐含的前提。**
+>
+> **第 12 类把这条教训又推进了一步**：同一批「没人校验」的写法，
+> 常常是被**同一个前提**一次性漏掉的。第 11 类修的是「符号与数字之间
+> **没有**括号」这一种邻接方式，于是同族的另几种邻接——**带**括号
+> （如 `state.py`：`GraphState`（50-126））、带冒号（如 `config.py:370-379`）、
+> 以及表格里的「行首文件名 + 描述中匿名区间」——就一并漏在外面。
+> 补上后声明数 558 → 594，抓出 5 处错值，其中 `GraphState` 那一处
+> **整整偏了 40 行**，却既不越界、也不报错——是第 10 类那种
+> 「不精确的静默漂移」的放大版。
+> 教训：**找到一个盲区后，要顺着它的前提把同族写法一次清干净，
+> 而不是等下一轮再发现另一半。**
 
 如果只是想重新生成一份结构骨架（用于新增模块时查行号）：
 
