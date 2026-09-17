@@ -129,6 +129,79 @@ def test_not_found_is_a_successful_call_not_an_error(business_db):
     assert not decision.error
 
 
+# ---------------------------------------------------------------------------
+# 1b. 收口轮的正文没有消费者（延迟优化留下的观测点）
+# ---------------------------------------------------------------------------
+def _walk_spans(nodes):
+    """把 span 树摊平成字典列表（含嵌套子节点）。"""
+    for node in nodes:
+        yield node
+        yield from _walk_spans(node.get("children") or [])
+
+
+def _run_with_trace(query, model):
+    """跑一次工具 Agent，并取回它这一趟的 span 树。
+
+    ``persist=False`` 是刻意的：测试不能往 ``logs/trace.jsonl`` 里写记录——
+    那个文件是离线定量分析的输入，混进测试请求会污染统计（本项目已因此
+    把 928 条 span 里的 860 条空转误当成真实流量读过一次）。
+    """
+    from app.core.tracing import begin_trace, end_trace
+
+    begin_trace("tool-agent-discard-check")
+    decision = run_tool_agent(query, model=model)
+    return decision, list(_walk_spans(end_trace(persist=False)))
+
+
+def test_closing_round_answer_is_discarded_not_reused(business_db):
+    """已取到证据后，收口轮写下的正文**不被采用**——它是一段纯浪费的生成。
+
+    这一轮唯一的有效产出是「没有更多工具调用」，而它已经由 ``tool_calls``
+    为空表达出来了；正文没有任何消费者（最终答案必须由 L4 受控生成，
+    引用编号与置信度只在那一层产生）。
+
+    代价是实打实的。真实埋点里的这条链路::
+
+        09-15 20:08  tool 阶段 5096.6ms = 2499.7（1 次调用）+ 2571.0（0 次调用）
+
+    收口轮占了工具阶段的一半，而 54 条真实链路里有 46 条正是这个形状。
+
+    守的是**丢弃关系**而不是某个具体长度：正文要进 ``discarded_chars``
+    供离线核对该指令有没有生效，但**绝不能**进 ``direct_answer``——后者是
+    直答出口，会被调用方直接当成答案返回。
+    """
+    wasted = "张三的剩余年假为 12 天，调休 3 天。"
+    model = RecordingModel([
+        {"name": "query_leave_balance", "args": {"employee_id": "E1001"}},
+        wasted,
+    ])
+
+    decision, spans = _run_with_trace("张三的年假还剩几天", model)
+
+    assert decision.used_tools == ["query_leave_balance"]
+    assert decision.direct_answer is None, "已取到证据时正文不得被当成答案"
+
+    closing = [s for s in spans if s["name"] == "agent_step_1"]
+    assert len(closing) == 1, "第二轮必须真实发生——链式调用还要靠它再决策一次"
+    assert closing[0]["attrs"]["tool_calls"] == 0
+    assert closing[0]["attrs"]["discarded_chars"] == len(wasted)
+
+
+def test_agent_prompt_tells_the_model_not_to_write_the_discarded_answer():
+    """提示词必须明确要求：已取到数据且无需再调工具时，不要再撰写回答。
+
+    这是**唯一**能减小收口轮成本的手段——轮次本身省不掉，它同时承担
+    「链式调用时再决策一次」的职责（54 条链路里有 5 条要用到）。
+
+    它没有行为载体：删掉这句话不会让任何别的测试变红，却会让每次工具请求
+    白花约 2 秒。所以只能对文案本身设护栏——改词可以，但必须是有意的。
+    """
+    from app.core.tool_agent import SYSTEM_PROMPT
+
+    assert "不要再写回答" in SYSTEM_PROMPT
+    assert "会被直接丢弃" in SYSTEM_PROMPT
+
+
 # ===========================================================================
 # 2. 候选集与幻觉护栏
 # ===========================================================================

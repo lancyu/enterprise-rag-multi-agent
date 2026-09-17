@@ -45,11 +45,11 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **15879 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **15905 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | 8 个 + 2 个条件分支 |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
-| 测试 | 30 个文件（26 个 `test_*.py`），`pytest` **464 项全绿** |
+| 测试 | 30 个文件（26 个 `test_*.py`），`pytest` **466 项全绿** |
 | 内置语料 | 12 个文档，切分后 **176 个片段** |
 
 ---
@@ -221,7 +221,7 @@
 | `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
 | `workflow_graph.py` | **1-192** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（5395 行）
+### 3.4 `app/core/` — 调度与基础能力（5421 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -243,10 +243,10 @@
 | `router_agent.py` | **1-414** | **路由 Agent**：入口场景判定 + 边界管控。**Phase 0 起它同时是"门面"**——场景常量与越界话术改由 `routing/catalog.py` 定义、此处 re-export，既有 import 点一个不动，但"唯一定义处"已经转移 |
 | `routing/`（包） | **1-1809** | **混合意图路由（四层漏斗）**：目录 → 句式信号 → 锚点 → 融合打分 → 门控 → 仲裁 → 编排。当前只被 `/routing/intent-preview` 调用 |
 | `sub_agents.py` | **1-355** | **闲聊 / 简单 RAG / 复杂 RAG** 三个子 Agent（统一产出 `AgentAnswer`） |
-| `tool_agent.py` | **1-688** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
+| `tool_agent.py` | **1-706** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
 | `request_ctx.py` | **1-213** | 请求级共享：query 向量 / 来源白名单 / 本轮证据（授权与证据不由模型回传） |
 | `self_check.py` | **1-340** | 启动自检与健康检查（9 项） |
-| `prompts.py` | **1-232** | 提示词集中注册表 |
+| `prompts.py` | **1-240** | 提示词集中注册表 |
 | `tracing.py` | **1-161** | 全链路 span 树 + trace_id 贯穿 |
 | `observability.py` | **1-39** | LangSmith 追踪接入 |
 | `rag_engine.py` | **1-109** | RAG 五层的兼容门面 |
@@ -796,7 +796,7 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 **复杂 RAG 的两条硬约束**：① **原问题必须参与检索**——拆解模型漏掉主语的例子很多，
 只搜子问题会漏掉最相关的那一篇；② 合并去重取**较高** fused 分，不是先到先得。
 
-#### 📍 `app/core/tool_agent.py`（1-688）—— 工具 Agent
+#### 📍 `app/core/tool_agent.py`（1-706）—— 工具 Agent
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
@@ -806,7 +806,7 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 | `ToolDecision` | 272-326 | 决策结果（含 `direct_answer` / `steps` / `used_tools`） |
 | `execute_tool_calls` | 404-488 | 执行调用：schema 校验 → 落地护栏 → 记 step |
 | `run_tool_agent` | 494-562 | 主循环：取证据 → 交回决策（最多 `TOOL_AGENT_MAX_STEPS` 轮） |
-| `_decide` | 565-666 | 每轮的判断：继续调工具 / 直答 / 收口 |
+| `_decide` | 565-684 | 每轮的判断：继续调工具 / 直答 / 收口 |
 
 **⚠️ 直答出口的判据是 `not used_tools`（一次都没**成功**取到证据），不是 `attempted`（提过调用）**
 
@@ -819,6 +819,17 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 
 按 `attempted` 判断，这句追问会被**丢掉**，本轮退化成「零证据 → L4 拒答」，
 用户看到「知识库中没有找到相关信息」——而他实际只缺一个称呼。
+
+**收口轮的正文会被丢弃**：`used_tools` 非空时模型主动收口（本轮没有工具调用），
+这一轮的 `content` **不赋值给 `direct_answer`**——它没有任何消费者，最终答案必须由
+L4 受控生成（引用编号、置信度、拒答判定只在那一层产生）。该轮真正的有效产出只是
+「没有更多工具调用」这条消息，而它已经由 `tool_calls` 为空表达出来了。
+
+代价是实打实的：真实埋点里这一轮 **2571ms**，占工具阶段（5096ms）的一半，
+而 54 条真实链路里有 **46 条**正是这个形状（单次工具调用 → 收口）。
+轮次本身省不掉——它同时承担「链式调用时再决策一次」的职责（5 条链路要用到），
+所以提示词明确要求模型此时**不要再撰写回答**，并把被丢弃的正文长度记进
+`agent_step_N` span 的 `discarded_chars`，供离线核对这条指令有没有生效。
 
 **服务端没有登录态，工号只能来自用户原话或工具返回值**：`employee_id` 出现在
 schema 里（模型要填），但它**不是**授权事实——没有身份可对账。护栏因而落在
@@ -879,7 +890,7 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 | 文件 | 关键行号 | 要点 |
 |---|---|---|
 | `rag_engine.py` | 入口 `37-50` / `61-77` | RAG 五层的兼容门面，外部只认这一个入口；**历史裁剪只在这层做**，避免两处裁剪导致配置静默失效 |
-| `prompts.py` | `PROMPTS` 24-186 / `render` 223-232 | 提示词集中注册；缺变量抛异常而不是填空串（空串会让模型收到残缺指令却不报错） |
+| `prompts.py` | `PROMPTS` 24-186 / `render` 231-240 | 提示词集中注册；缺变量抛异常而不是填空串（空串会让模型收到残缺指令却不报错） |
 | `self_check.py` | `FAST_ITEMS` 18 / `run_self_check` 233-323 | 分层自检：快速项只探本地基础设施，深度项会真调 LLM 默认跳过 |
 | `rate_limit.py` | `RateLimiter` 24-43 | 每 IP 一个 `deque` 存命中时间戳，滑动窗口 60s，默认 20 次/分钟 |
 | `request_ctx.py` | `get/set_query_vector` 139-146 | 用 `contextvars` 存 `(query文本, 向量)`，读时校验文本一致才算命中 |
@@ -1908,7 +1919,7 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **464 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **466 passed** |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（5 项发现 = 豁免清单 5 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
@@ -1950,7 +1961,7 @@ open http://127.0.0.1:8001/static/index.html
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（15879 行）**
+**应用代码 `app/`（15905 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -1961,7 +1972,7 @@ open http://127.0.0.1:8001/static/index.html
 | `api/test.py` | 33 | `api/workflow.py` | 146 |
 | `config.py` | 741 | `core/__init__.py` | 1 |
 | `core/errors.py` | 28 | `core/llm_factory.py` | 23 |
-| `core/observability.py` | 39 | `core/prompts.py` | 232 |
+| `core/observability.py` | 39 | `core/prompts.py` | 240 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 59 |
 | `core/request_ctx.py` | 213 | `core/router_agent.py` | 414 |
 | `core/routing/__init__.py` | 96 | `core/routing/anchors.py` | 275 |
@@ -1971,7 +1982,7 @@ open http://127.0.0.1:8001/static/index.html
 | `core/routing/signals.py` | 327 | `core/routing/similarity.py` | 138 |
 | `core/routing/vocabulary.py` | 114 | `core/self_check.py` | 340 |
 | `core/source_acl.py` | 48 | `core/sub_agents.py` | 355 |
-| `core/tool_agent.py` | 688 | `core/tracing.py` | 161 |
+| `core/tool_agent.py` | 706 | `core/tracing.py` | 161 |
 | `db/__init__.py` | 1 | `db/enterprise_db.py` | 170 |
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
 | `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
@@ -2006,7 +2017,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_short_term_symmetry.py` | 221 | `tests/test_soft_warnings.py` | 253 |
 | `tests/test_soul_write.py` | 124 | `tests/test_span_tree_smoke.py` | 264 |
 | `tests/test_sqlite_tools.py` | 258 | `tests/test_structure.py` | 203 |
-| `tests/test_structure_chunking.py` | 178 | `tests/test_tool_agent.py` | 638 |
+| `tests/test_structure_chunking.py` | 178 | `tests/test_tool_agent.py` | 711 |
 | `tests/test_vector_store_backends.py` | 381 | `scripts/baseline_snapshot.py` | 133 |
 | `scripts/check_vector_db.py` | 307 | `scripts/chunk_metrics.py` | 171 |
 | `scripts/chunking_ab.py` | 326 | `scripts/deadcode_scan.py` | 904 |

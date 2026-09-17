@@ -591,10 +591,14 @@ def _decide(
         with span(f"agent_step_{round_index}") as s:
             reply = bound.invoke(messages)
             calls = list(getattr(reply, "tool_calls", None) or [])
+            # 正文只在这里取一次：下面的回捞、废弃计数、直答出口用的都是它。
+            # （回捞命中时 reply 会被重建成空正文，但那条路径下 calls 必非空，
+            #  正文不会再被消费，故此处的取值与重建之后再取等价。）
+            content = _content_of(reply)
             if not calls:
                 # 模型把工具调用写成了正文 → 回捞（见 parse_text_tool_calls
                 # 的说明：这是实测到的模型/端点行为，不处理会静默降级成直答）。
-                recovered = parse_text_tool_calls(_content_of(reply))
+                recovered = parse_text_tool_calls(content)
                 if recovered:
                     decision.recovered_calls += len(recovered)
                     logger.warning(
@@ -617,6 +621,11 @@ def _decide(
                     calls = list(reply.tool_calls)
             s.attrs["tool_calls"] = len(calls)
             s.attrs["recovered"] = decision.recovered_calls
+            # 收口轮的正文会被丢弃（见下方 else 分支），记下它有多长。
+            # 这一轮相当大一部分耗时是在生成一段没人要的答案，少了这个观测点
+            # 就只能靠猜——实测 2571ms，占工具阶段 5097ms 的一半。
+            if not calls and decision.used_tools:
+                s.attrs["discarded_chars"] = len(content)
             logger.info(
                 "Agent 第 %d 轮决策：tool_calls=%d（%s）",
                 round_index + 1, len(calls),
@@ -624,7 +633,6 @@ def _decide(
             )
 
         if not calls:
-            content = _content_of(reply)
             if not decision.used_tools:
                 # 直答出口。判据是「**本轮一次都没成功取到证据**」，而不是
                 # 「一次工具都没提过」——两者的差别正是一条真实存在的链路：
@@ -648,7 +656,17 @@ def _decide(
                 )
             else:
                 # 已收集过证据、模型主动收口 → 交回 L4 生成带引用的答案。
-                logger.info("Agent 证据收集结束，转入受控生成")
+                #
+                # ⚠️ content 在这里**被丢弃**，这不是疏漏而是架构决定的结果：
+                # 这一轮唯一的有效产出是「没有更多工具调用」，而它已经由 calls
+                # 为空表达出来了；正文没有任何消费者（最终答案必须由受控生成
+                # 产出，引用编号与置信度只在那一层产生）。
+                # 代价是实打实的：提示词已要求模型此时别再写回答，长度记进
+                # discarded_chars，供离线核对它到底听没听。
+                logger.info(
+                    "Agent 证据收集结束，转入受控生成（本轮正文 %d 字被丢弃）",
+                    len(content),
+                )
             return decision
 
         decision.attempted = True
