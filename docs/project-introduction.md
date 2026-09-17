@@ -45,7 +45,7 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **15928 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **15934 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | 8 个 + 2 个条件分支 |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
@@ -221,7 +221,7 @@
 | `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
 | `workflow_graph.py` | **1-192** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（5433 行）
+### 3.4 `app/core/` — 调度与基础能力（5439 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -243,7 +243,7 @@
 | `router_agent.py` | **1-414** | **路由 Agent**：入口场景判定 + 边界管控。**Phase 0 起它同时是"门面"**——场景常量与越界话术改由 `routing/catalog.py` 定义、此处 re-export，既有 import 点一个不动，但"唯一定义处"已经转移 |
 | `routing/`（包） | **1-1809** | **混合意图路由（四层漏斗）**：目录 → 句式信号 → 锚点 → 融合打分 → 门控 → 仲裁 → 编排。当前只被 `/routing/intent-preview` 调用 |
 | `sub_agents.py` | **1-355** | **闲聊 / 简单 RAG / 复杂 RAG** 三个子 Agent（统一产出 `AgentAnswer`） |
-| `tool_agent.py` | **1-706** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
+| `tool_agent.py` | **1-712** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
 | `request_ctx.py` | **1-213** | 请求级共享：query 向量 / 来源白名单 / 本轮证据（授权与证据不由模型回传） |
 | `self_check.py` | **1-347** | 启动自检与健康检查（9 项） |
 | `prompts.py` | **1-240** | 提示词集中注册表 |
@@ -800,7 +800,7 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 **复杂 RAG 的两条硬约束**：① **原问题必须参与检索**——拆解模型漏掉主语的例子很多，
 只搜子问题会漏掉最相关的那一篇；② 合并去重取**较高** fused 分，不是先到先得。
 
-#### 📍 `app/core/tool_agent.py`（1-706）—— 工具 Agent
+#### 📍 `app/core/tool_agent.py`（1-712）—— 工具 Agent
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
@@ -810,7 +810,7 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 | `ToolDecision` | 272-326 | 决策结果（含 `direct_answer` / `steps` / `used_tools`） |
 | `execute_tool_calls` | 404-488 | 执行调用：schema 校验 → 落地护栏 → 记 step |
 | `run_tool_agent` | 494-562 | 主循环：取证据 → 交回决策（最多 `TOOL_AGENT_MAX_STEPS` 轮） |
-| `_decide` | 565-684 | 每轮的判断：继续调工具 / 直答 / 收口 |
+| `_decide` | 565-690 | 每轮的判断：继续调工具 / 直答 / 收口 |
 
 **⚠️ 直答出口的判据是 `not used_tools`（一次都没**成功**取到证据），不是 `attempted`（提过调用）**
 
@@ -831,9 +831,24 @@ L4 受控生成（引用编号、置信度、拒答判定只在那一层产生�
 
 代价是实打实的：真实埋点里这一轮 **2571ms**，占工具阶段（5096ms）的一半，
 而 54 条真实链路里有 **46 条**正是这个形状（单次工具调用 → 收口）。
-轮次本身省不掉——它同时承担「链式调用时再决策一次」的职责（5 条链路要用到），
-所以提示词明确要求模型此时**不要再撰写回答**，并把被丢弃的正文长度记进
-`agent_step_N` span 的 `discarded_chars`，供离线核对这条指令有没有生效。
+
+被丢弃的正文长度记进 `agent_step_N` span 的 `discarded_chars`。**这个埋点值得单独说一句**：
+它存在的意义就是让"这条 wasted 还剩多少"从猜测变成可核对，而它第一次核对就推翻了一个假设。
+
+> ⚠️ **2026-09-17 复测：提示词的"不要再撰写回答"没有生效。**
+>
+> | 链路 | 第 1 轮（调工具） | 第 2 轮（收口） |
+> |---|---|---|
+> | 链式「张三的年假还剩几天」 | 2249ms，1 次调用 | 1443ms，1 次调用（**无**收口，撞满 2 轮退出） |
+> | 单次「E1001 的年假余额是多少」 | 3633ms，1 次调用 | **4105ms，`discarded_chars=52`** |
+>
+> 模型照旧写了 52 字。**但更要紧的是第二层结论：正文从来不是成本。**
+> 52 字按实测吐字速度（≈94 字/s）只值约 **0.5s**，剩下约 **3.6s 是这一轮的模型往返本身**。
+> 也就是说，"让模型别写"即使**完全生效**，也只省下 0.5s，且**省不掉这一轮**。
+>
+> 所以：**别再往提示词里加同义句**。真正的浪费是「这一轮该不该发生」——
+> 单次工具调用链路里，第 2 轮的职责只有"确认没有更多调用"，而链式链路要靠它再决策一次，
+> 前者占了 46/54。要省这笔钱得让**代码**判断证据是否已经齐备，不能指望模型自觉。
 
 **服务端没有登录态，工号只能来自用户原话或工具返回值**：`employee_id` 出现在
 schema 里（模型要填），但它**不是**授权事实——没有身份可对账。护栏因而落在
@@ -1970,7 +1985,7 @@ open http://127.0.0.1:8001/static/index.html
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（15928 行）**
+**应用代码 `app/`（15934 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -1991,7 +2006,7 @@ open http://127.0.0.1:8001/static/index.html
 | `core/routing/signals.py` | 327 | `core/routing/similarity.py` | 138 |
 | `core/routing/vocabulary.py` | 114 | `core/self_check.py` | 347 |
 | `core/source_acl.py` | 48 | `core/sub_agents.py` | 355 |
-| `core/tool_agent.py` | 706 | `core/tracing.py` | 161 |
+| `core/tool_agent.py` | 712 | `core/tracing.py` | 161 |
 | `db/__init__.py` | 1 | `db/enterprise_db.py` | 170 |
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
 | `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
@@ -2026,7 +2041,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_short_term_symmetry.py` | 221 | `tests/test_soft_warnings.py` | 253 |
 | `tests/test_soul_write.py` | 124 | `tests/test_span_tree_smoke.py` | 264 |
 | `tests/test_sqlite_tools.py` | 258 | `tests/test_structure.py` | 203 |
-| `tests/test_structure_chunking.py` | 178 | `tests/test_tool_agent.py` | 711 |
+| `tests/test_structure_chunking.py` | 178 | `tests/test_tool_agent.py` | 720 |
 | `tests/test_vector_store_backends.py` | 381 | `scripts/baseline_snapshot.py` | 133 |
 | `scripts/check_vector_db.py` | 307 | `scripts/chunk_metrics.py` | 171 |
 | `scripts/chunking_ab.py` | 326 | `scripts/deadcode_scan.py` | 904 |

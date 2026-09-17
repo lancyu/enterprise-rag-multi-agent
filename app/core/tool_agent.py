@@ -622,8 +622,14 @@ def _decide(
             s.attrs["tool_calls"] = len(calls)
             s.attrs["recovered"] = decision.recovered_calls
             # 收口轮的正文会被丢弃（见下方 else 分支），记下它有多长。
-            # 这一轮相当大一部分耗时是在生成一段没人要的答案，少了这个观测点
-            # 就只能靠猜——实测 2571ms，占工具阶段 5097ms 的一半。
+            # 少了这个观测点就只能靠猜——2026-09-15 实测 2571ms，占工具阶段 5097ms 一半。
+            #
+            # ⚠️ 2026-09-17 复测（提示词加了「已经取到数据之后，不要再撰写回答」之后）：
+            #     单次调用链路 agent_step_1 = 4105ms，discarded_chars = 52 —— 模型照旧写了。
+            #     更要紧的是**正文从来不是成本**：52 字 ÷ 吐字 ~94 字/s ≈ 0.5s，
+            #     剩下 ~3.6s 是这一轮的模型往返本身。所以「让模型别写」最多省 0.5s、
+            #     且省不掉这一轮 —— 真正的浪费是**这一轮该不该发生**。
+            #     别再往提示词里加同义句，那对付不了它（实测无效）。
             if not calls and decision.used_tools:
                 s.attrs["discarded_chars"] = len(content)
             logger.info(
