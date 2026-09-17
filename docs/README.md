@@ -50,12 +50,33 @@
 | [`history/DEVELOPMENT-LOG.md`](history/DEVELOPMENT-LOG.md) | **开发日志（整合版）**——25 篇过程性文档按五个阶段压成一份可通读的日志，含每篇的核心结论与"为什么被取代" |
 
 `history/` 下其余 25 篇是**原文留档**。它们的共同点是：描述的架构已经不是现在的架构。
-其中 19 篇开头带这样的声明：
+其中 15 篇开头带这样的声明：
 
 > ⚠️ 本文写作于「单 Agent 架构」时期，其中提到的部分模块已随多 Agent 重构删除。
 
 **它们不该被当成现状来读**，但值得保留——里面记录的是「当时为什么这么选」
 「踩了什么坑」「怎么定位的」，这类信息在代码里是找不到的。
+
+### ⚠️ 读 `history/` 时最容易踩的一个坑：把「当时的外部约束」当成现状
+
+这批文档写作时，上游是 Moonshot 的**测试账号**（`RPM=3`、「连续两次调用要隔 20 秒」、
+「免费档」）。后来的模型选型、提示词、脚本默认参数里都留过**以它为由**的论证，
+连 `scripts/*.py` 的默认休眠 20 秒都曾是照它定的。
+
+**那个账号早已换掉**——现用火山方舟（`ark.cn-beijing.volces.com` + `glm-5-2-260617`），
+这个配额不存在了。所以凡是读到 `RPM=3` / 「限频账号」/「每分钟 3 次」/「配额吃紧」，
+都请当成**「当时为什么这么设计」的语境**，不要当成现状依据。
+
+还有一处极易混淆：**`RATE_LIMIT_PER_MINUTE=20` 与上游配额毫无关系**。
+它是本服务**对自己的入站限流**（按 IP 限用户请求数）——数字 20 也是当年从上游 RPM
+倒推出来的，如今同样没有标定依据。
+
+带这类描述的文档开头已加了一行指向本节的提示。**只在 `history/` 内加提示、
+不改写原文**——改写历史记录等于篡改历史，那些句子本身是准确的现场记录。
+唯一例外是 `data/开发者API接入指南.md`：那句「免费额度每分钟 3 次」是**被检索的语料**，
+改了会动 RAG 语义，所以**一个字都不动**。
+
+现行约束请看 [`../README.md`](../README.md) 与 [`deployment.md`](deployment.md)。
 
 按主题分布：
 
@@ -69,7 +90,7 @@
 | 路由演进 | `dynamic-routing-design.md`、`model-routing-redesign.md`、`intent-routing-redesign.md`、`intent-routing-hardening-plan.md` |
 | 工具调用 | `tool-calling-enablement-plan.md`、`tool-invocation-online-vs-offline.md`、`offline-slot-extraction-migration.md` |
 | 落地设计 | `p0-implementation-design.md` |
-| 个人用途 | `项目学习指南.md`（面试准备，962 行） |
+| 个人用途 | `项目学习指南.md`（面试准备，965 行） |
 
 ---
 

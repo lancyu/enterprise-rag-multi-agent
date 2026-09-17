@@ -1,5 +1,8 @@
 # 动态路由设计方案（Flash / Pro 自动选型）
 
+> ⚠️ **提示：文中提到的上游账号配额（`RPM=3` / 「限频账号」/「免费档」）是写作当时的事实，
+> 现已不成立**，请勿当作现状依据——说明见 [`docs/README.md`](../README.md) 第二节的告示。
+
 > ⚠️ **本文所述机制已全部删除，仅作历史记录保留。**
 > 最终归宿：`docs/history/model-routing-redesign.md`（重设计）→ `docs/multi-agent-architecture.md`
 > （多 Agent 重构，档位机制整体删除，`model_tier` 字段恒为 `default` 只为不打破前端契约）。

@@ -1,5 +1,8 @@
 # 故障复盘：回答不完整 + 很慢
 
+> ⚠️ **提示：文中提到的上游账号配额（`RPM=3` / 「限频账号」/「免费档」）是写作当时的事实，
+> 现已不成立**，请勿当作现状依据——说明见 [`docs/README.md`](../README.md) 第二节的告示。
+
 > ⚠️ **本文写作于「单 Agent 架构」时期，其中提到的部分模块已随多 Agent 重构删除**
 > （`core/{intent_router,model_router,complexity_scorer,query_signals,intent_catalog,cascade,smalltalk}.py`、
 > `tools/{rule,ticket,user}_tool.py`、`api/routing.py`，存档见 `_archive/`）。

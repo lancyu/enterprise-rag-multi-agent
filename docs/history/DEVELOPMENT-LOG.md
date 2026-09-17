@@ -140,7 +140,7 @@ intent-routing-redesign ─┘    路由改为「路由 Agent 一次模型调用
 | 文档 | 说明 |
 |---|---|
 | [`p0-implementation-design.md`](p0-implementation-design.md) | P0 七项落地方案。方案里参考了 nanobot 的扁平分组（`agent/ bus/ config/ cron/ session/ utils/`） |
-| [`项目学习指南.md`](项目学习指南.md) | 962 行的**面试准备文档**——把项目从"能跑通"讲到"能讲清"。与代码无关，纯个人用途 |
+| [`项目学习指南.md`](项目学习指南.md) | 965 行的**面试准备文档**——把项目从"能跑通"讲到"能讲清"。与代码无关，纯个人用途 |
 
 ### 阶段 5 的架构分水岭
 

@@ -1,4 +1,8 @@
 # 健康检查设计调研报告（对标业界开源项目）
+
+> ⚠️ **提示：文中提到的上游账号配额（`RPM=3` / 「限频账号」/「免费档」）是写作当时的事实，
+> 现已不成立**，请勿当作现状依据——说明见 [`docs/README.md`](../README.md) 第二节的告示。
+
 - 日期：2026-09-04 ｜ 方式：`curl -sL raw.githubusercontent.com` 取源码后本地精读（未用 GitHub API）
 - 对象：dify、ragflow、LiteLLM、Langflow + Kubernetes 官方探针规范
 - 声明：代码片段均为 main 分支原文。未找到的已明确标注，不做推测性填充。
