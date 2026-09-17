@@ -6,7 +6,7 @@
 但**代码一改行号就漂移**，而文档不会报错、只会悄悄变错。
 靠人肉复核几百条声明不现实，所以把复核本身自动化。
 
-它校验十二类声明
+它校验十三类声明
 ----------------
 1. **符号行号**：表格里 ``| `func_name` | 120-145 |`` 形式的行，
    用 AST 取该符号真实的 ``lineno`` / ``end_lineno`` 比对。
@@ -49,8 +49,13 @@
     +4 是文档自身新增的示例——总数以运行输出为准），并抓出 5 处错值
     （`state.py::GraphState`、`create_initial_state`、`indexer.py::_merge_short_chunks`
     差一行、`config.py` 两处裸区间指向了隔壁小节）。
+13. **`app/config.py` 的「配置分区（按行号）」表**：``| 47-54 | 项目路径 |``。
+    区间由源码里的 ``# ====`` 横幅划分，而**横幅不是符号**，前 12 类一条也够不着。
+    失效形态隐蔽：往中间插一整块新分区后，每行**单看都仍在界内、也仍递增不重叠**，
+    第 9 类的弱判据照过（已发生 4 次）。判据：**起 = 横幅首行，止 = 下一横幅首行 − 1**
+    （末段止 = 文件末行），表首的前置段同样要精确。只收紧判据，不重复计入 counted。
 
-第 3～12 类都是**后来补齐的盲区**。共同的教训是：
+第 3～13 类都是**后来补齐的盲区**。共同的教训是：
 校验器只覆盖了它「认得出」的写法，认不出的写法会静默通过，
 于是「全部一致」这个结论本身是可疑的——**先把覆盖面补全，再去改文档**。
 第 3～10 类补的都是「文档里**有**某种写法但没人校验」；
@@ -60,6 +65,10 @@
 第 12 类把这条教训又推进了一步：**同一批「没人校验」的写法，往往是被同一个前提
 一次性漏掉的**——找到一个（第 11 类）之后，就该顺着这个前提把同族写法一次清干净，
 而不是等下一轮再发现另一半。
+第 13 类换了性质：前 12 类比对的都是「某个符号的跨度」或「文件总行数」，
+而它是拿**源码里的结构标记**（``# ====`` 横幅）去对文档里的区间。
+**当一类声明的真值不在 AST 里时，别急着把它划进「只能手工复核」——
+先找找源码里还有没有别的稳定锚点。**
 另外两条教训见 ``_SECTION_DIR_RE`` 与 ``_ROW_RE`` 的注释：
 正则重名会让上下文继承静默失效（把正确声明报成错误）；
 文件名模式漏掉 ``/`` 会让整行被静默跳过（把过期声明放过去）。
@@ -270,6 +279,47 @@ def make_resolver(totals: dict):
         return None
 
     return resolve
+
+
+#: 第 13 类：`app/config.py` 的「配置分区（按行号）」表。
+#:
+#: 这张表的区间由源码里的 ``# ====`` 横幅划分，而**横幅不是 AST 符号**——
+#: 前 12 类靠的全是「某个符号的跨度」或「文件总行数」，所以整张表一条也够不着。
+#: 它的失效形态还特别隐蔽：往中间插进一整块新分区后，表里每一行**单看都仍然
+#: 在文件界内、也仍然递增不重叠**，第 9 类的弱判据一路放行（已发生 4 次，最近一次是
+#: 「混合意图路由」整块插入，把后面所有分区整体下移近百行，Embedding 的行号指到了数据库）。
+#: 判据：区间须精确落在横幅上——**起 = 横幅首行，止 = 下一横幅首行 − 1**
+#: （末段止 = 文件末行）；表首允许有一行覆盖「第一个横幅之前」的前置段，同样要精确。
+#: 注意：这些行已被第 9 类计入 `counted`，本类只收紧判据，**不重复计数**。
+_CONFIG_TABLE_MARK = "配置分区（按行号）："
+_BANNER_RE = re.compile(r"^\s*#\s*=+\s*$")
+_BANNER_OR_COMMENT_RE = re.compile(r"^\s*#")
+
+
+def config_partition_spans(config_path: str = "app/config.py") -> list[tuple[int, int]]:
+    """从 ``# ====`` 横幅算出分区的 ``(起, 止)`` 序列；文件不存在时返回空表。"""
+    path = pathlib.Path(config_path)
+    if not path.exists():
+        return []
+    src = path.read_text(encoding="utf-8").splitlines()
+    bars = [i for i, line in enumerate(src, 1) if _BANNER_RE.match(line)]
+    if not bars:
+        return []
+    # 一个横幅 = 连续几条横线（中间只隔标题注释/空行）；横幅之间隔着代码即为分区边界。
+    groups: list[list[int]] = [[bars[0]]]
+    for prev, nxt in zip(bars, bars[1:]):
+        between = src[prev : nxt - 1]
+        if all(
+            _BANNER_OR_COMMENT_RE.match(g) or not g.strip() for g in between
+        ):
+            groups[-1].append(nxt)
+        else:
+            groups.append([nxt])
+    starts = [g[0] for g in groups]
+    return [
+        (start, starts[i + 1] - 1 if i + 1 < len(starts) else len(src))
+        for i, start in enumerate(starts)
+    ]
 
 
 def verify(doc_path: str) -> list[str]:
@@ -518,7 +568,9 @@ def verify(doc_path: str) -> list[str]:
         for sym, start, end in _R12_SYM_PAREN_RE.findall(line):
             cands.append((base, f"`{sym}`", int(start), int(end), False))
         for name, start, end in _R12_BARE_FILE_RE.findall(line):
-            cands.append((resolve(name, ctx_dir), name, int(start), int(end), False))
+            # name 传 None：文件名就在引用里（`` `config.py:370-379` ``），
+            # 再把它当符号名回显会说出「app/config.py 的 config.py」这种话。
+            cands.append((resolve(name, ctx_dir), None, int(start), int(end), False))
         for sym, start, end in _R12_SYM_COLON_RE.findall(line):
             cands.append((base, f"`{sym}`", int(start), int(end), False))
         for sym, single in _R12_SYM_COLON_LINE_RE.findall(line):
@@ -562,10 +614,46 @@ def verify(doc_path: str) -> list[str]:
                         f"但该文件里没有符号恰好是这个跨度"
                     )
                 else:
+                    # 匿名区间，或文件名就写在引用里的那种（见上面 name=None 的两处）
                     problems.append(
                         f"L{lineno}: {ref_file} 里没有任何符号恰好跨 {start}-{end}"
-                        f"（该行引用的文件由行首单元格提供）"
                     )
+
+    # --- app/config.py 的「配置分区」表（第 13 类）---
+    # 判据与理由见 `config_partition_spans` 上方注释。它不增加 counted（第 9 类已计过）。
+    real_parts = config_partition_spans()
+    if real_parts:
+        mark = next((i for i, line in enumerate(lines) if _CONFIG_TABLE_MARK in line), None)
+        if mark is None:
+            # 找不到定位标记**必须报错**，不能静默跳过：否则改掉那行小标题
+            # 就会让本类悄悄退化成空转，而门禁照样是绿的（护栏恒真）。
+            problems.append(
+                f"找不到配置分区表的定位标记「{_CONFIG_TABLE_MARK}」——"
+                f"若是有意改名，请同步更新本类；否则本类已失效"
+            )
+        else:
+            rows: list[tuple[int, int, int]] = []
+            started = False
+            for i in range(mark + 1, len(lines)):
+                row = _BARE_RANGE_RE.match(lines[i])
+                if row:
+                    started = True
+                    rows.append((i + 1, int(row.group(1)), int(row.group(2))))
+                elif started and (not lines[i].strip() or not lines[i].startswith("|")):
+                    break
+            expected = [(1, real_parts[0][0] - 1), *real_parts]
+            if len(rows) != len(expected):
+                problems.append(
+                    f"L{mark + 1}: 配置分区表有 {len(rows)} 行，而源码 `# ====` 横幅是 "
+                    f"{len(real_parts)} 个分区（加上首个横幅之前的前置段应为 {len(expected)} 行）"
+                )
+            else:
+                for idx, ((doc_line, start, end), want) in enumerate(zip(rows, expected), 1):
+                    if (start, end) != want:
+                        problems.append(
+                            f"L{doc_line}: 配置分区表第 {idx} 行写 {start}-{end}，"
+                            f"但源码横幅对应的是 {want[0]}-{want[1]}"
+                        )
 
     # --- 通用文件行数声明（含非 Python、含架构图里的无反引号写法）---
     # 解析不出候选或候选有歧义时**直接跳过**：宁可漏判不可误判。
