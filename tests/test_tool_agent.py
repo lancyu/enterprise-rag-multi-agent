@@ -90,7 +90,7 @@ def test_direct_exit_when_model_calls_no_tool():
 def test_evidence_exit_when_model_calls_business_tool(business_db):
     """调用业务工具 → 证据出口：结果进证据集，答案交给 L4 生成。
 
-    脚本第二项是 ``[]``（明确表达"本轮不调工具"）：``TOOL_AGENT_MAX_STEPS`` 默认 3，
+    脚本第二项是 ``[]``（明确表达"本轮不调工具"）：``TOOL_AGENT_MAX_STEPS`` 默认 2，
     脚本耗尽后会重复最后一项——不显式收口的话，假模型会把同一个调用再发两遍，
     测出来的步骤数就不是我们想断言的东西了。
     """

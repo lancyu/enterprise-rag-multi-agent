@@ -66,8 +66,11 @@ class GraphState(TypedDict, total=False):
     #: **唯一驱动图分支的字段**（见 app/graph/edges.py::scene_route_edge）。
     scene: str
     scene_reason: str                  # 判定理由（人话，供前端面板与排障）
-    scene_confidence: float            # 模型自评置信度，**不参与路由**
-    scene_source: str                  # router（模型判定）/ router:fallback（规则兜底）
+    #: 模型自评置信度，**不参与路由**。本地漏斗判定时恒为 0——那不是"很不确定"，
+    #: 而是这个数本来就不适用（没有模型自评），区分两者要看 scene_source。
+    scene_confidence: float
+    #: router（模型判定）/ router:local（本地漏斗零模型判定）/ router:fallback（规则兜底）
+    scene_source: str
     #: 复杂 RAG 实际用于检索的查询（含原问题）。拆歪了是静默错误，故必须可见。
     sub_queries: List[str]
     #: 工具 Agent 报告"我干不了活"（模型不支持 function calling）。

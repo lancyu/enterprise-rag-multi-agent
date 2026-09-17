@@ -45,11 +45,11 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **15770 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **15879 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | 8 个 + 2 个条件分支 |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
-| 测试 | 25 个文件（22 个 `test_*.py`），`pytest` **271 项全绿** |
+| 测试 | 30 个文件（26 个 `test_*.py`），`pytest` **464 项全绿** |
 | 内置语料 | 12 个文档，切分后 **176 个片段** |
 
 ---
@@ -75,7 +75,7 @@
 │                  app/utils/          加载 / 缓存 / 校验 / 日志  │
 └─────────────────────────────────────────────────────────────┘
                           ▲
-                          │ 全局配置：app/config.py（730 行）
+                          │ 全局配置：app/config.py（741 行）
                           │ 贯穿所有层：app/core/tracing.py（全链路 span 树）
 ```
 
@@ -96,7 +96,7 @@
 | 4 | 从 Redis 取最近 10 轮对话历史 | `app/memory/chat_history.py` |
 | 5 | **启动 LangGraph 工作流** | `app/graph/workflow_graph.py` |
 | 5.1 | 节点① `memory_load` —— 加载长期记忆与多轮历史，注入后续提示词 | `app/graph/nodes.py` |
-| 5.2 | 节点② `router` —— **路由 Agent**：一次模型调用判定场景（五选一），越界就地拦下 | `app/core/router_agent.py` |
+| 5.2 | 节点② `router` —— **路由 Agent**：先走零模型本地漏斗，判不了才调模型；场景五选一，越界就地拦下 | `app/core/router_agent.py` |
 | 5.3 | 条件边 —— 按场景分发，五路互斥 | `app/graph/edges.py` |
 | 5.4 | 节点③④⑤⑥ —— 五个子 Agent 中的某一个执行（见 §2.4） | `app/core/sub_agents.py` / `tool_agent.py` |
 | 5.5 | 节点⑦ `generate_answer` —— 受控生成（引用 + 置信度 + 拒答） | `app/rag/generator.py` |
@@ -135,7 +135,7 @@
                         └──────┬───────┘
                                ▼
                         ┌──────────────┐
-                        │    router    │ ① 路由 Agent：一次模型调用判场景
+                        │    router    │ ① 路由 Agent：本地漏斗优先，判不了才调模型
                         │  唯一入口     │    越界在此拦下（边界规则只有一份）
                         └──────┬───────┘
                  ┌─────────────┴─────────────┐
@@ -188,7 +188,7 @@
 |---|---|---|
 | `app/__init__.py` | 1 | 包声明 |
 | `app/main.py` | **1-231** | 应用装配：lifespan、中间件、路由注册、全局异常 |
-| `app/config.py` | **1-730** | 全局配置中心（所有环境变量集中于此） |
+| `app/config.py` | **1-741** | 全局配置中心（所有环境变量集中于此） |
 
 ### 3.2 `app/api/` — HTTP 接口层（1492 行）
 
@@ -208,20 +208,20 @@
 > 存档在 `_archive/removed-selfbuilt-routing-20260915-1314/app/api/routing.py`；
 > ② 现在这一份服务的是 `docs/intent-routing-hybrid-design.md` 的四层漏斗。
 >
-> 并且它在 **Phase 0 只是"预演"**：生产链路仍走 `router_agent.route_query`
-> 的一次模型调用，这个端点用来在切换之前把"这句话会被判成哪条路、凭什么"
-> 逐条摊开看——**先能看清，再敢切换**。
+> 并且它在 **Phase 0 只是"预演"**：`/routing/intent-preview` 跑完整四层漏斗，
+> 把"这句话会被判成哪条路、凭什么"逐条摊开。**生产只采信它的前两层**
+> （锚定 + 词面，零成本零模型），判不了的交回模型——**先能看清，再敢切换**。
 
-### 3.3 `app/graph/` — LangGraph 编排层（1020 行）
+### 3.3 `app/graph/` — LangGraph 编排层（1023 行）
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
-| `state.py` | **1-166** | 全局状态 `GraphState` + 初始态工厂（`scene` 与 `intent_type` 的分工见模块 docstring） |
+| `state.py` | **1-169** | 全局状态 `GraphState` + 初始态工厂（`scene` 与 `intent_type` 的分工见模块 docstring） |
 | `nodes.py` | **1-566** | 9 个节点的实现（含五个 Agent） |
 | `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
 | `workflow_graph.py` | **1-192** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（5300 行）
+### 3.4 `app/core/` — 调度与基础能力（5395 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -240,10 +240,10 @@
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
-| `router_agent.py` | **1-323** | **路由 Agent**：入口场景判定 + 边界管控。**Phase 0 起它同时是"门面"**——场景常量与越界话术改由 `routing/catalog.py` 定义、此处 re-export，既有 import 点一个不动，但"唯一定义处"已经转移 |
+| `router_agent.py` | **1-414** | **路由 Agent**：入口场景判定 + 边界管控。**Phase 0 起它同时是"门面"**——场景常量与越界话术改由 `routing/catalog.py` 定义、此处 re-export，既有 import 点一个不动，但"唯一定义处"已经转移 |
 | `routing/`（包） | **1-1809** | **混合意图路由（四层漏斗）**：目录 → 句式信号 → 锚点 → 融合打分 → 门控 → 仲裁 → 编排。当前只被 `/routing/intent-preview` 调用 |
 | `sub_agents.py` | **1-355** | **闲聊 / 简单 RAG / 复杂 RAG** 三个子 Agent（统一产出 `AgentAnswer`） |
-| `tool_agent.py` | **1-684** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
+| `tool_agent.py` | **1-688** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
 | `request_ctx.py` | **1-213** | 请求级共享：query 向量 / 来源白名单 / 本轮证据（授权与证据不由模型回传） |
 | `self_check.py` | **1-340** | 启动自检与健康检查（9 项） |
 | `prompts.py` | **1-232** | 提示词集中注册表 |
@@ -357,7 +357,7 @@
 `AUTH_EXEMPT_PATHS` 里的 Dify 接口有自己的 Key 校验，所以两条鉴权链**不能互相替代**。
 CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"本地能跑、上线跨域全挂"，代码里已自动关闭凭据。
 
-#### 📍 `app/config.py`（1-730）
+#### 📍 `app/config.py`（1-741）
 
 配置分区（按行号）：
 
@@ -366,28 +366,28 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 | 1-46 | 模块 docstring、依赖导入与解析辅助（`_env` 14-22 / `_env_bool` 25-34 / `_env_list` 37-44） |
 | 47-54 | 项目路径 |
 | 55-100 | 大模型配置（OpenAI 兼容协议；含思考开关、超时与输出上限） |
-| 101-117 | **Agent（function calling）配置** —— 工具决策最多几轮 `TOOL_AGENT_MAX_STEPS` 116 |
-| 118-132 | **复杂 RAG Agent 配置** —— 子问题上限 `COMPLEX_RAG_MAX_SUBQUERIES` 124 与合并片段上限 `COMPLEX_RAG_MAX_DOCS` 130 |
-| 133-244 | **混合意图路由（四层漏斗）** —— `ROUTE_BUDGET_MS` 170（**总耗时硬上界**）、`ROUTE_LEXICAL_FLOOR` 200 / `ROUTE_LEXICAL_MARGIN` 212、`effective_route_semantic_floor` 227-233 / `effective_route_semantic_margin` 236-242 |
-| 245-256 | **业务结构化数据库（SQLite，只读）** —— `SQLITE_DB_PATH` 254（员工 / 假期余额两张表，供 3 个只读工具查询） |
-| 257-272 | Embedding 配置（含查询侧指令前缀 `EMBEDDING_QUERY_PREFIX` 267） |
-| 273-328 | 向量数据库配置（`VECTOR_DB_CHOICES` 277、`VECTOR_DB_TYPE` 282、`MILVUS_URI` 294、`effective_vector_collection` 304-311、`validate_vector_db_type` 314-326） |
-| 329-337 | Redis 配置 |
-| 338-375 | 对话与检索参数（`effective_score_threshold` 356-365、`effective_fallback_min` 368-374） |
-| 376-400 | 融合权重与阈值 |
-| 401-407 | 词面倒排索引配置（BM25） |
-| 408-419 | Rerank 精排 |
-| 420-431 | 可观测性接入（LangSmith） |
-| 432-437 | Embedding 缓存配置 |
-| 438-442 | 入站限流配置 |
-| 443-474 | 记忆系统配置（短期记忆 + 长期记忆） |
-| 475-481 | 切片策略（基础：分片大小 + 重叠） |
-| 482-561 | 切片策略（配置化 + 策略可替换） |
-| 562-582 | PDF 图片抽取 |
-| 583-610 | Dify 兼容接口 |
-| 611-632 | 入站鉴权（fail-closed） |
-| 633-663 | 来源访问控制 ACL（`_parse_source_acl` 646-659） |
-| 664-730 | 服务配置 + `mask_secret` 672-678 + `dump_config` 681-730 |
+| 101-128 | **Agent（function calling）配置** —— 工具决策最多几轮 `TOOL_AGENT_MAX_STEPS` 127 |
+| 129-143 | **复杂 RAG Agent 配置** —— 子问题上限 `COMPLEX_RAG_MAX_SUBQUERIES` 135 与合并片段上限 `COMPLEX_RAG_MAX_DOCS` 141 |
+| 144-255 | **混合意图路由（四层漏斗）** —— `ROUTE_BUDGET_MS` 181（**总耗时硬上界**）、`ROUTE_LEXICAL_FLOOR` 211 / `ROUTE_LEXICAL_MARGIN` 223、`effective_route_semantic_floor` 238-244 / `effective_route_semantic_margin` 247-253 |
+| 256-267 | **业务结构化数据库（SQLite，只读）** —— `SQLITE_DB_PATH` 265（员工 / 假期余额两张表，供 3 个只读工具查询） |
+| 268-283 | Embedding 配置（含查询侧指令前缀 `EMBEDDING_QUERY_PREFIX` 278） |
+| 284-339 | 向量数据库配置（`VECTOR_DB_CHOICES` 288、`VECTOR_DB_TYPE` 293、`MILVUS_URI` 305、`effective_vector_collection` 315-322、`validate_vector_db_type` 325-337） |
+| 340-348 | Redis 配置 |
+| 349-386 | 对话与检索参数（`effective_score_threshold` 367-376、`effective_fallback_min` 379-385） |
+| 387-411 | 融合权重与阈值 |
+| 412-418 | 词面倒排索引配置（BM25） |
+| 419-430 | Rerank 精排 |
+| 431-442 | 可观测性接入（LangSmith） |
+| 443-448 | Embedding 缓存配置 |
+| 449-453 | 入站限流配置 |
+| 454-485 | 记忆系统配置（短期记忆 + 长期记忆） |
+| 486-492 | 切片策略（基础：分片大小 + 重叠） |
+| 493-572 | 切片策略（配置化 + 策略可替换） |
+| 573-593 | PDF 图片抽取 |
+| 594-621 | Dify 兼容接口 |
+| 622-643 | 入站鉴权（fail-closed） |
+| 644-674 | 来源访问控制 ACL（`_parse_source_acl` 657-670） |
+| 675-741 | 服务配置 + `mask_secret` 683-689 + `dump_config` 692-741 |
 
 > ⚠️ **这张表是"整表错位"的高危区**（本项目的校验器只校验「末行是否覆盖文件末尾」，
 > 逐行标签与区间是否对得上是**查不出来**的）。混合路由配置块插在第 133 行之后，
@@ -497,12 +497,12 @@ Dify 的 `score_threshold` 是 **0~1 的绝对相关度**语义，
 
 ### 4.3 编排层 `app/graph/`
 
-#### 📍 `app/graph/state.py`（1-166）
+#### 📍 `app/graph/state.py`（1-169）
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `GraphState` | 50-123 | 用 `TypedDict` 声明一次提问的全部字段 |
-| `create_initial_state` | 126-166 | 初始态工厂 |
+| `GraphState` | 50-126 | 用 `TypedDict` 声明一次提问的全部字段 |
+| `create_initial_state` | 129-169 | 初始态工厂 |
 
 字段分五组：**输入**（user_query / session_id / user_id）、**记忆**（chat_history / memory_context）、
 **路由**（intent_type / intent_capability / intent_source / model_tier / route_decision）、
@@ -578,14 +578,26 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 
 ### 4.4 调度层 `app/core/`
 
-#### 📍 `app/core/router_agent.py`（1-323）—— 路由 Agent（入口 + 边界管控 + 常量门面）
+#### 📍 `app/core/router_agent.py`（1-414）—— 路由 Agent（入口 + 边界管控 + 常量门面）
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `RouteDecision` | 122-150 | 判定结果：场景 + 理由 + 来源 + 越界话术 |
-| `route_query` | 153-215 | 主入口：组装提示词 → 调模型 → 解析 |
-| `_parse_route` | 225-252 | 从模型输出里抠出场景名，不在闭集内即拒绝 |
-| `_fallback_route` | 285-317 | 模型不可用时的**确定性规则兜底** |
+| `RouteDecision` | 130-159 | 判定结果：场景 + 理由 + 来源 + 越界话术 |
+| `SOURCE_LOCAL` | 167 | **本地快通道**的 `source` 取值（`router:local`） |
+| `_local_route` | 184-228 | **本地快通道**：零模型判定，命中即返回，判不了返回 `None` |
+| `route_query` | 231-306 | 主入口：本地快通道 → 组装提示词 → 调模型 → 解析 |
+| `_parse_route` | 316-343 | 从模型输出里抠出场景名，不在闭集内即拒绝 |
+| `_fallback_route` | 376-408 | 模型不可用时的**确定性规则兜底** |
+
+**本地快通道：让这道闸门对句式固定的提问免费。** 路由 Agent 每次要花一次模型调用
+（实测 2000~2700ms），而它**不产出任何用户可见的内容**——这段时间是纯粹的闸门。
+`_local_route` 因此先用 `app/core/routing` 的四层漏斗做一次零模型判定：
+**只采信锚定层与词面层**（纯正则 + 字符 bigram，实测亚毫秒），命中即返回；
+后两层（语义要一次 embedding、灰区仲裁要一次模型调用）与模型路由同一量级，
+采信它们省不下时间，故一律放行给模型——那里有更完整的上下文（对话历史与越界规则）。
+两个前置条件缺一不可：调用方**未注入 `model`**（注入的语义是"这次交给它判"，
+测试靠它隔离外部依赖，快通道抢答会把被测行为**掩蔽**掉），且处于**真实模型模式**
+（离线走 Mock + 确定性兜底，那是一条刻意设计的降级路径，不该顺手改其行为）。
 
 **Phase 0 起它多了一个身份：常量门面。** 通道闭集与越界话术
 （`SCENE_*` / `SCENES` / `DEFAULT_SCENE` / `OUT_OF_SCOPE_ANSWER`）
@@ -688,9 +700,9 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 而 `simple_rag` 与 `complex_rag` 跨通道打平，确实该进灰区。
 **同一个数字在不同层级上的含义是不同的**——这是"边际"这个概念最容易做错的地方。
 
-> ⚠️ **Phase 0 的边界**：以上全部只被 `POST /routing/intent-preview` 触发，
-> 生产入口仍是 `router_agent.route_query` 的一次模型调用。
-> 这样安排是为了**先把判定依据看清楚，再动生产链路**。
+> ⚠️ **Phase 0 的边界**：以上四层的**全部**判定细节只被 `POST /routing/intent-preview`
+> 触发；生产链路当前只接入了**前两层**（作为 `_local_route` 零模型快通道），
+> 语义层与灰区仲裁仍走模型。这样安排是为了**先把判定依据看清楚，再动生产链路**。
 
 #### 📍 `app/core/routing/catalog.py`（1-455）—— 意图目录（唯一的定义处）
 
@@ -784,7 +796,7 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 **复杂 RAG 的两条硬约束**：① **原问题必须参与检索**——拆解模型漏掉主语的例子很多，
 只搜子问题会漏掉最相关的那一篇；② 合并去重取**较高** fused 分，不是先到先得。
 
-#### 📍 `app/core/tool_agent.py`（1-684）—— 工具 Agent
+#### 📍 `app/core/tool_agent.py`（1-688）—— 工具 Agent
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
@@ -793,8 +805,8 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 | `parse_text_tool_calls` | 214-247 | 从**正文**里回捞被写成文本的工具调用 |
 | `ToolDecision` | 272-326 | 决策结果（含 `direct_answer` / `steps` / `used_tools`） |
 | `execute_tool_calls` | 404-488 | 执行调用：schema 校验 → 落地护栏 → 记 step |
-| `run_tool_agent` | 494-558 | 主循环：取证据 → 交回决策（最多 `TOOL_AGENT_MAX_STEPS` 轮） |
-| `_decide` | 561-662 | 每轮的判断：继续调工具 / 直答 / 收口 |
+| `run_tool_agent` | 494-562 | 主循环：取证据 → 交回决策（最多 `TOOL_AGENT_MAX_STEPS` 轮） |
+| `_decide` | 565-666 | 每轮的判断：继续调工具 / 直答 / 收口 |
 
 **⚠️ 直答出口的判据是 `not used_tools`（一次都没**成功**取到证据），不是 `attempted`（提过调用）**
 
@@ -1777,8 +1789,9 @@ LangGraph 把一次请求拆成若干个**节点**，节点之间用**边**连�
 ### 5.7 四层意图路由：为什么不全交给大模型
 
 > ⚠️ **本节的前半部分记录的是重构前的机制，已被「路由 Agent」取代。**
-> 现在入口只有一次模型调用（`app/core/router_agent.py::route_query`）判定场景，
-> 五路互斥；模型不可用时由 `_fallback_route` 兜底为 `simple_rag`。
+> 现在入口由 `app/core/router_agent.py::route_query` 判定场景，五路互斥；零模型的
+> **本地快通道**（`_local_route`）会先采信**重建后的漏斗**（`app/core/routing/`）的
+> 前两层，命中即返回，其余交给模型；模型不可用时由 `_fallback_route` 兜底为 `simple_rag`。
 > 下面这套自造漏斗的代码与测试已移入
 > `_archive/removed-selfbuilt-routing-20260915-1314/`，保留本节的目的是
 > **记住当初为什么造它、以及它为什么被推翻**（详见 `docs/history/intent-routing-redesign.md`）。
@@ -1825,10 +1838,11 @@ LangGraph 把一次请求拆成若干个**节点**，节点之间用**边**连�
 
 排查「这句话为什么被路由到这里」：看响应体里的 `scene` / `scene_reason` /
 `scene_source` 三个字段（`_meta_common` 统一透出，流式与非流式都有）。
-`scene_reason` 是路由 Agent 给出的判定理由，`scene_source` 说明它来自模型还是兜底。
+`scene_reason` 是路由 Agent 给出的判定理由，`scene_source` 说明它来自本地漏斗、模型还是兜底。
 
 > 旧实现靠 `/routing/intent-preview` 观测候选得分表；该端点随自造路由一并删除。
-> **生产链路上**现在确实没有"候选得分"这个概念——只有一个模型调用加一条兜底。
+> **生产链路上**目前仍没有"候选得分"这个概念——只有本地快通道的通道级判定、
+> 一次模型调用，加一条确定性兜底。
 > 不过新漏斗（§4.4）的 `POST /routing/intent-preview` 又把它带回来了，
 > 区别在于它这次是**只读预演**：不参与生产判定，专门用来在切换之前
 > 把"这句话会被判成什么、凭什么"逐层看清。
@@ -1894,12 +1908,12 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **460 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **464 passed** |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（5 项发现 = 豁免清单 5 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
-| 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 14 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 521 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+| 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
+| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 522 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -1936,7 +1950,7 @@ open http://127.0.0.1:8001/static/index.html
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（15770 行）**
+**应用代码 `app/`（15879 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -1945,11 +1959,11 @@ open http://127.0.0.1:8001/static/index.html
 | `api/evaluation.py` | 80 | `api/knowledge.py` | 175 |
 | `api/memory.py` | 133 | `api/routing.py` | 110 |
 | `api/test.py` | 33 | `api/workflow.py` | 146 |
-| `config.py` | 730 | `core/__init__.py` | 1 |
+| `config.py` | 741 | `core/__init__.py` | 1 |
 | `core/errors.py` | 28 | `core/llm_factory.py` | 23 |
 | `core/observability.py` | 39 | `core/prompts.py` | 232 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 59 |
-| `core/request_ctx.py` | 213 | `core/router_agent.py` | 323 |
+| `core/request_ctx.py` | 213 | `core/router_agent.py` | 414 |
 | `core/routing/__init__.py` | 96 | `core/routing/anchors.py` | 275 |
 | `core/routing/arbitration.py` | 199 | `core/routing/catalog.py` | 455 |
 | `core/routing/derive.py` | 143 | `core/routing/fusion.py` | 443 |
@@ -1957,11 +1971,11 @@ open http://127.0.0.1:8001/static/index.html
 | `core/routing/signals.py` | 327 | `core/routing/similarity.py` | 138 |
 | `core/routing/vocabulary.py` | 114 | `core/self_check.py` | 340 |
 | `core/source_acl.py` | 48 | `core/sub_agents.py` | 355 |
-| `core/tool_agent.py` | 684 | `core/tracing.py` | 161 |
+| `core/tool_agent.py` | 688 | `core/tracing.py` | 161 |
 | `db/__init__.py` | 1 | `db/enterprise_db.py` | 170 |
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
 | `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
-| `graph/nodes.py` | 566 | `graph/state.py` | 166 |
+| `graph/nodes.py` | 566 | `graph/state.py` | 169 |
 | `graph/workflow_graph.py` | 192 | `main.py` | 231 |
 | `memory/__init__.py` | 185 | `memory/chat_history.py` | 70 |
 | `memory/consolidator.py` | 154 | `memory/dream.py` | 148 |
@@ -1986,7 +2000,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_dify_api.py` | 253 | `tests/test_eval_section.py` | 74 |
 | `tests/test_fixes_assessment.py` | 252 | `tests/test_infra.py` | 248 |
 | `tests/test_memory_pipeline.py` | 197 | `tests/test_meta_align.py` | 132 |
-| `tests/test_multi_agent.py` | 874 | `tests/test_parent_chunk.py` | 112 |
+| `tests/test_multi_agent.py` | 953 | `tests/test_parent_chunk.py` | 112 |
 | `tests/test_pdf_image.py` | 97 | `tests/test_rag.py` | 204 |
 | `tests/test_routing_funnel.py` | 1371 | `tests/test_service.py` | 247 |
 | `tests/test_short_term_symmetry.py` | 221 | `tests/test_soft_warnings.py` | 253 |
@@ -2018,7 +2032,7 @@ open http://127.0.0.1:8001/static/index.html
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **521 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+它对本文的 **522 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
 覆盖十类写法：
 
 | # | 声明类型 | 例子 |
@@ -2030,14 +2044,14 @@ python scripts/verify_doc_linenos.py
 | 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-730）` |
 | 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 223-232 |
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:126-139` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（495 行）、`app/config.py`（730 行） |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（495 行）、`app/config.py`（741 行） |
 | 9 | 区域行号表（裸区间） | `273-328` 向量数据库配置 |
-| 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:153-215` |
+| 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:231-306` |
 
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：521 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：522 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 

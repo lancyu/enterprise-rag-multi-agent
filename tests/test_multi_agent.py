@@ -213,6 +213,85 @@ def test_router_node_records_degradation_in_state(monkeypatch):
     assert out["route_decision"]["degradations"]
 
 
+# ---------------------------------------------------------------------------
+# 本地快通道：零模型判定
+#
+# 它守的是一条**不会有人报错**的主张：路由这道闸门对句式固定的提问不该收费。
+# 失效的表现不是崩溃，而是延迟悄悄退回 2.5 秒——没有任何日志会变红。
+# ---------------------------------------------------------------------------
+def test_local_fast_path_answers_without_touching_the_model(monkeypatch):
+    """命中快通道时，一次模型调用都不该发生——这正是它存在的全部理由。"""
+    from app.core import router_agent
+
+    monkeypatch.setattr(config, "USE_REAL_LLM", True)
+
+    def _must_not_be_called():
+        raise AssertionError("本地快通道命中时不得调用路由模型")
+
+    monkeypatch.setattr(router_agent, "_default_model", _must_not_be_called)
+
+    decision = route_query("你好")
+
+    assert decision.scene == SCENE_SMALLTALK
+    assert decision.source == router_agent.SOURCE_LOCAL
+    assert decision.degraded is False
+
+
+def test_local_fast_path_leaves_the_gray_zone_to_the_model(monkeypatch):
+    """漏斗判不了时必须**交回模型**，不能自己拍一个默认场景。
+
+    否则灰区请求会集体掉进 ``DEFAULT_SCENE``——那是一次静默的质量退化，
+    而延迟指标反而会变得很好看。
+    """
+    from app.core import router_agent
+
+    monkeypatch.setattr(config, "USE_REAL_LLM", True)
+    stub = _TextModel(
+        json.dumps({"route": SCENE_COMPLEX_RAG, "reason": "测试", "confidence": 0.9})
+    )
+    monkeypatch.setattr(router_agent, "_default_model", lambda: stub)
+
+    decision = route_query("请帮我分析一下当前国际形势对我们部门明年预算的影响")
+
+    assert decision.scene == SCENE_COMPLEX_RAG
+    assert decision.source == "router"
+    assert stub.calls, "漏斗判不了时应当落到模型上"
+
+
+def test_injecting_a_model_bypasses_the_local_fast_path():
+    """注入 ``model`` 的语义是"这次路由交给它判"，快通道不得抢答。
+
+    测试正是靠注入假模型来隔离外部依赖。若快通道在注入时也插一脚，
+    注入的模型就永远轮不到——那不是隔离，是把被测行为掩蔽掉：
+    上面那些守"模型判成什么样"的用例会在无声中变成空转。
+    """
+    stub = _TextModel(
+        json.dumps({"route": SCENE_TOOL, "reason": "测试", "confidence": 0.9})
+    )
+
+    decision = route_query("你好", model=stub)
+
+    assert decision.scene == SCENE_TOOL
+    assert decision.source == "router"
+    assert stub.calls
+
+
+def test_local_fast_path_is_off_when_there_is_no_real_model(monkeypatch):
+    """离线（无 Key）走的是 Mock 模型 + 确定性兜底，那是一条刻意设计的降级路径。
+
+    快通道只挂在真实链路上：本次改动只为降延迟，不该顺手改离线行为。
+    """
+    from app.core import router_agent
+
+    monkeypatch.setattr(config, "USE_REAL_LLM", False)
+
+    decision = route_query("你好")
+
+    assert decision.scene == SCENE_SMALLTALK, "离线仍应由确定性兜底认下寒暄"
+    assert decision.source == "router:fallback"
+    assert decision.source != router_agent.SOURCE_LOCAL, "快通道不得挂在离线链路上"
+
+
 # ===========================================================================
 # 二、场景（该谁干）与出口（答案怎么来的）是两个问题
 # ===========================================================================

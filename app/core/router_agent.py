@@ -48,11 +48,16 @@
 - 不猜 ``out_of_scope``：误拦一个真业务问题 = 用户彻底拿不到答案，代价不可逆。
   宁可漏拦（交给 L4 用"知识库中没有相关信息"收尾），不可错拦。
 
-代价，诚实地记一笔
-------------------
+代价与回收
+----------
 新增这一层让每个请求多一次模型调用（闲聊路径除外）。换来的是：越界与闲聊
 **不再进入检索/工具/L4**——闲聊路径的模型调用反而从 1 次降到 0 次，
 两条相抵；真正变贵的是工具链路（+1 次分类调用）。
+
+这次调用后来被**本地快通道**大幅回收（见 :func:`_local_route`）：句式固定的提问
+（寒暄 / 身份 / 年假 / 查人 / 工单号）由零模型的锚定层与词面层直接判定，
+实测亚毫秒返回；只有判不了的才落到模型。代价是判据从"模型读懂语义"
+退化为"句式与词面匹配"，故只采信漏斗里**零成本**的两层，其余一律放行给模型。
 """
 from __future__ import annotations
 
@@ -63,6 +68,7 @@ from typing import Any, Dict, List, Optional
 
 from app import config
 from app.core.prompts import render as render_prompt
+from app.core.routing import match_intent
 from app.core.routing.catalog import (
     DEFAULT_SCENE,
     OUT_OF_SCOPE_ANSWER,
@@ -73,12 +79,14 @@ from app.core.routing.catalog import (
     SCENE_TOOL,
     SCENES,
 )
+from app.core.routing.router import SOURCE_ANCHOR, SOURCE_LEXICAL
 from app.core.tracing import span
 from app.utils.logger import logger
 
 __all__ = [
     "DEFAULT_SCENE",
     "OUT_OF_SCOPE_ANSWER",
+    "SOURCE_LOCAL",
     "RouteDecision",
     "SCENES",
     "SCENE_COMPLEX_RAG",
@@ -130,7 +138,8 @@ class RouteDecision:
     #: 模型对本次分类的自评置信度（0~1）。**不参与任何路由判断**——
     #: 它只用于观测：长期偏低说明提示词里的边界规则没写清楚。
     confidence: float = 0.0
-    #: ``router``（模型判定）/ ``router:fallback``（模型不可用，确定性规则兜底）
+    #: ``router``（模型判定）/ ``router:local``（本地漏斗零模型判定）
+    #: / ``router:fallback``（模型不可用，确定性规则兜底）
     source: str = "router"
     #: 本条链路是否发生了降级（模型不可用 / 输出不可解析）。
     degraded: bool = False
@@ -148,6 +157,75 @@ class RouteDecision:
             "source": self.source,
             "degraded": self.degraded,
         }
+
+
+# ---------------------------------------------------------------------------
+# 本地快通道：零模型判定
+# ---------------------------------------------------------------------------
+#: ``source`` 新增取值：本地漏斗直接拍的板。与 ``router``（模型判定）、
+#: ``router:fallback``（模型不可用走规则）并列，让"这次是谁拍的板"一眼可见。
+SOURCE_LOCAL = "router:local"
+
+#: 漏斗里**值得直接采信**的层级。只有这两层是零 IO、零模型的纯本地计算。
+#: 其余两层（``fused`` 要一次 embedding、``arbitration`` 要一次模型调用）
+#: 与模型路由同一量级——采信它们省不下时间，却丢掉了模型路由手里更完整的
+#: 上下文（对话历史与越界规则的完整表述）。**省不下来就不做。**
+_LOCAL_TRUSTED_SOURCES = (SOURCE_ANCHOR, SOURCE_LEXICAL)
+
+#: 交给漏斗的时间预算：**0 表示"只允许零成本步骤"**。
+#: 这不是绕过机制的技巧，而正是漏斗自己设计的预算语义（见 ``routing/router.py``
+#: 的模块 docstring）：每一步动手前先算剩余，剩余不足就**不启动**这一步。
+#: 层①（锚定）与层②a（词面）在预算检查之前执行，因此照样会跑；
+#: 层②b（语义）与层④（仲裁）各自在动手前查剩余，为 0 时不会启动，
+#: 于是既不会多花一次 embedding，也不会多花一次仲裁模型调用。
+_LOCAL_BUDGET_MS = 0
+
+
+def _local_route(query: str) -> Optional[RouteDecision]:
+    """用本地漏斗做一次**零模型**判定；判不了返回 ``None``（交由模型路由）。
+
+    为什么值得插这一刀
+    ------------------
+    路由 Agent 每次要花一次模型调用（实测 2000~2700ms），而它**不产出任何
+    用户可见的内容**——这整段时间是纯粹的闸门。企业知识库的提问里有相当一部分
+    是"你好""我还剩几天年假""查一下张三的座机""T123 什么状态"这类**句式固定**
+    的问法，漏斗的锚定层（正则）与词面层（字符 bigram）就能判准，实测亚毫秒级。
+
+    为什么通道可以直接当场景用
+    --------------------------
+    ``catalog.CHANNELS is catalog.SCENES``——两者是同一套常量，中间不存在映射表，
+    也就不存在"映射表与常量悄悄漂移"这一类缺陷。
+    """
+    if not (query or "").strip():
+        return None
+    try:
+        decision = match_intent(query, budget_ms=_LOCAL_BUDGET_MS)
+    except Exception as exc:  # noqa: BLE001
+        # 漏斗文档承诺"永不抛异常"，但它是**新加的一道闸门**：异常若漏出来
+        # 会打断整轮回答。这里再兜一层，判不了就当它没说话。
+        logger.warning("本地漏斗异常，改由模型路由：%s", exc)
+        return None
+    if decision.source not in _LOCAL_TRUSTED_SOURCES:
+        return None
+
+    logger.info(
+        "本地快通道命中：scene=%s（%s）%s，本轮未调用路由模型",
+        decision.channel, decision.source, decision.reason,
+    )
+    return RouteDecision(
+        scene=decision.channel,
+        reason=f"本地漏斗（{decision.source}）：{decision.reason}",
+        # 本地判定**没有**模型自评，如实记 0。这不是"很不确定"，而是
+        # "这个数本来就不适用"——区分这两者靠 ``source`` 字段，不靠这个数。
+        confidence=0.0,
+        source=SOURCE_LOCAL,
+        degraded=False,
+        # 锚定/词面层判不出越界（那要仲裁层），故这里恒为 None；
+        # 仍然按同一条件写，是为了将来若放开采信层级时不必回头补这一处。
+        out_of_scope_answer=(
+            OUT_OF_SCOPE_ANSWER if decision.channel == SCENE_OUT_OF_SCOPE else None
+        ),
+    )
 
 
 def route_query(
@@ -172,6 +250,19 @@ def route_query(
     """
     if not (query or "").strip():
         return _fallback_route(query, "空提问")
+
+    # ── 本地快通道（零模型）──────────────────────────────────────────────
+    # 两个前置条件缺一不可：
+    #
+    # ① ``model is None`` —— 注入 model 的语义是"这次路由交给这个模型判"，
+    #    测试正是靠它隔离外部依赖。若在这里也插一脚，注入的假模型就永远
+    #    轮不到：那不是隔离，是掩蔽。
+    # ② ``USE_REAL_LLM`` —— 离线（未配 Key）走的是 Mock 模型 + 确定性兜底，
+    #    那是一条刻意设计的降级路径。本次改动只为降延迟，不该顺手改其行为。
+    if model is None and config.USE_REAL_LLM:
+        local = _local_route(query)
+        if local is not None:
+            return local
 
     # 离线（未配 Key）时不浪费一次必然失败的模型调用：直接走确定性规则。
     # 这不是"省一次调用"，而是避免 Mock 模型返回一段与分类无关的文本后

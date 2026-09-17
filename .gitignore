@@ -66,6 +66,11 @@ __pycache__/
 venv/
 .python-version
 
+# uv 锁文件：本项目实际用 .venv + requirements*.txt 管依赖（见 README 的安装说明），
+# uv.lock 只是本地跑 uv 时的副产物。提交它等于出现"两套依赖事实"，
+# 且 README 承诺的安装路径与它不一致，会让新用户困惑。
+uv.lock
+
 # 编辑器与系统
 .vscode/
 .idea/

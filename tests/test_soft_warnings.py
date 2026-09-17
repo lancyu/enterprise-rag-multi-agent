@@ -26,7 +26,7 @@ def _fake_tool_model(*script):
     """记录工具调用、不联网的假模型（见 tests/fakes.py）。
 
     末尾必须由调用方补一项 ``[]``（"本轮不调工具"）作收口：
-    ``TOOL_AGENT_MAX_STEPS`` 默认 3，脚本耗尽后会重复最后一项——不收口的话
+    ``TOOL_AGENT_MAX_STEPS`` 默认 2，脚本耗尽后会重复最后一项——不收口的话
     假模型会把同一个调用再发两遍，故障计数就不止一条了。
     """
     return RecordingModel(list(script))
