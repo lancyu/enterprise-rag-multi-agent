@@ -334,7 +334,11 @@ def test_fused_zero_still_refuses_for_contrast():
 # 唯一还需要守住的是下面这条：max_retries 必须显式为 0。
 # ---------------------------------------------------------------------------
 def test_raw_model_disables_sdk_retries(monkeypatch):
-    """max_retries 必须显式为 0，否则 SDK 默认 2 次会与退避重试叠加放大。"""
+    """max_retries 必须显式为 0：SDK 默认重试 2 次会把 LLM_TIMEOUT=30 放大到 101s。
+
+    放大在**只有 SDK 一层**时就已成立（30 × 3 + 退避），与是否存在自造包装无关——
+    那条 trace 实证「用户看到一直加载」的根因还在，所以这个断言还得守着。
+    """
     monkeypatch.setattr(config, "LLM_API_KEY", "test-key")
     monkeypatch.setattr(config, "LLM_BASE_URL", "http://127.0.0.1:9/v1")
 

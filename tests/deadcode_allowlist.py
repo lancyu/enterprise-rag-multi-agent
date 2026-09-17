@@ -74,6 +74,18 @@ ALLOWLIST_REASONS: Dict[str, str] = {
     # `app/core/routing/fusion.py::soft_warn` 真的会调用它（依赖抖动、仲裁失败
     # 都要留痕），豁免随之成为僵尸条目，由 allowlist 的反向校验报出后删除。
     # 这正是那套反向校验存在的意义：豁免不会随着被豁免者的复活而自动失效。
+
+    # ---- Mock 模型：LangChain 受保护钩子，静态分析看不到那条边 ----
+    # MockChatModel 继承 BaseChatModel，`_generate` 是它的**必需覆写点**：
+    # 调用方写的是 `model.invoke(...)`，由基类分派进来，全仓没有一行 `._generate(`。
+    # 它此前之所以"看起来被引用"，是因为 tests/test_infra.py 里那段已删除的
+    # 退避重试用例凑巧写了 `model._generate([])` —— 一次偶然的文本命中，
+    # 而不是真实的调用边。那次删除让这条边露了出来，属**检测器变准**而非新增问题。
+    "unused_method:app/providers/llm.py:MockChatModel._generate": (
+        "LangChain BaseChatModel 的受保护钩子，由 invoke() 分派调用，全仓无直接"
+        "调用点（属框架约定，静态分析看不到）。删掉它 Mock 模型立刻不可用："
+        "无 Key 时的离线链路、以及全部注入假模型的单测都会失效。"
+    ),
 }
 
 #: 供测试直接使用的键集合

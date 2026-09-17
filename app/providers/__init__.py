@@ -4,7 +4,7 @@
 业务代码。各 provider 的实现见同目录：
 
     - embeddings.py  向量化（Embedder：api / local-hash 双模式降级）
-    - llm.py         大模型生成/分类（真实 / Mock 双模式降级，含限流重试）
+    - llm.py         大模型生成/分类（真实 / Mock 双模式降级）
     - rerank.py      精排（可选，sentence-transformers cross-encoder）
 
 业务代码（RAG 五层、图节点、API）建议优先从这里 import，例如：

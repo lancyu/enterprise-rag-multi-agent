@@ -17,7 +17,7 @@ from app.utils.logger import logger
 
 FAST_ITEMS = {"service", "vector_db", "agent_config", "sqlite_db", "workflow"}
 
-# 深度检查项：真实调用 LLM / Embedding，启动时默认跳过（避免消耗配额 + 卡启动）。
+# 深度检查项：真实调用 LLM / Embedding，启动时默认跳过（避免真实调用 + 避免卡启动）。
 # 对齐 Dify / LangGraph 的健康检查实践——启动 readiness 只探基础设施，绝不真实调用模型。
 # 仅在显式 deep=True（如 /test/all 手动全量自测）时执行。
 DEEP_ITEMS = {"retrieval", "chat"}
@@ -49,7 +49,7 @@ def _check_data_dir() -> dict:
 
 @_item("llm", "大模型配置")
 def _check_llm() -> dict:
-    # 仅校验配置，不真实 ping / 构建模型。LLM_HEALTH_CHECK 默认关闭，把配额留给真实对话。
+    # 仅校验配置，不真实 ping / 构建模型。LLM_HEALTH_CHECK 默认关闭，不在启动时发真实请求。
     # get_llm_mode 首次会惰性构造模型对象，但 ChatOpenAI 构造不发网络请求，安全。
     mode = get_llm_mode()
     detail = f"mode={mode}"
@@ -89,8 +89,10 @@ def _check_retrieval() -> dict:
 
 @_item("workflow", "LangGraph 工作流")
 def _check_workflow() -> dict:
-    # 只校验图已编译 + 节点齐全，不真实 invoke——invoke 会触发 LLM 生成（含限流重试），
-    # 是启动自检卡顿（旧版 70s）的主因。对齐 LangGraph 的 /ok 无副作用探活实践。
+    # 只校验图已编译 + 节点齐全，不真实 invoke——invoke 会真实触发 LLM 生成，
+    # 无网络时会把启动拖住（旧版曾卡到 70s+，主因是当时那层重试与超时叠加；
+    # 重试虽已移除，但单次 invoke 仍可能等满 LLM_TIMEOUT=30s）。
+    # 对齐 LangGraph 的 /ok 无副作用探活实践。
     graph = enterprise_workflow.get_graph()
     nodes = [n for n in getattr(graph, "nodes", {}).keys() if not n.startswith("__")]
     if not nodes:
@@ -236,10 +238,15 @@ def run_self_check(only_fast: bool = False, deep: bool = False) -> dict:
     Args:
         only_fast: 只跑本地快速项（service / vector_db / workflow）。
         deep: 是否执行深度检查项（retrieval / chat，会真实调用 LLM / Embedding）。
-            默认 False——启动自检只探本地基础设施，不消耗模型配额、不卡启动。
+            默认 False——启动自检只探本地基础设施，不发真实模型调用、不卡启动。
 
-    限流（429）类异常会被标记为 skip 而非 fail——免费档账号 RPM 极低，
-    自检期间触发限流属正常现象，不应阻断服务启动（真实对话时由重试机制兜底）。
+    限流（429）类异常会被标记为 skip 而非 fail：429 的语义是"暂时不可用"，
+    不是"配置错误"，自检期间触发它不构成"服务不健康"的证据，故不阻断启动。
+    这个判断与账号是否限流无关——任何供应商都可能返回 429。
+
+    ⚠️ 不要指望"真实对话时有重试兜底"：**重试已随自造包装层一并移除**
+    （见 app/providers/llm.py 的模块 docstring），真实对话遇到 429 会直接失败降级。
+    skip 只表示"这次没测出来"，**不等于**这条链路在真实流量下一定可用。
     """
     start = time.perf_counter()
     items = []
@@ -256,7 +263,7 @@ def run_self_check(only_fast: bool = False, deep: bool = False) -> dict:
                     "name": name,
                     "label": getattr(check, "_check_label"),
                     "status": "skip",
-                    "detail": "深度检查未启用（避免启动时消耗 LLM 配额），需 deep 模式手动触发",
+                    "detail": "深度检查未启用（避免启动时发真实调用），需 deep 模式手动触发",
                     "extra": {},
                     "elapsed_ms": 0,
                 }
@@ -279,13 +286,13 @@ def run_self_check(only_fast: bool = False, deep: bool = False) -> dict:
             passed += 1
         except Exception as exc:  # noqa: BLE001
             if _is_rate_limit(exc):
-                logger.warning("自检跳过 [%s]（触发限流，配额不足，不影响服务启动）", getattr(check, "_check_label"))
+                logger.warning("自检跳过 [%s]（上游返回 429，属暂时不可用，不影响服务启动）", getattr(check, "_check_label"))
                 items.append(
                     {
                         "name": name,
                         "label": getattr(check, "_check_label"),
                         "status": "skip",
-                        "detail": "限流跳过：RPM 配额不足，将在真实对话时自动重试",
+                        "detail": "限流跳过：上游暂时不可用（429），不影响服务启动",
                         "extra": {},
                         "elapsed_ms": int((time.perf_counter() - item_start) * 1000),
                     }

@@ -7,7 +7,7 @@
     3. trace：trace_id 生成/设置/获取、contextvars 隔离
     4. span 树：嵌套父子关系、序列化结构、trace.jsonl 持久化
     5. 限流：窗口内超限拦截、窗口滑出后放行
-    6. LLM 限流重试：_is_rate_limit 三层精确判定、退避次数与延迟封顶
+    6. LLM 限流（429）：_is_rate_limit 三层精确判定
 
 用法：
     cd langgraph-enterprise-bot && python -m tests.test_infra
@@ -191,14 +191,11 @@ check("入站限流", test_rate_limit)
 
 
 # ---------------------------------------------------------------------------
-print("\n[6] LLM 限流（429）判定与退避重试")
+print("\n[6] LLM 限流（429）判定")
 # ---------------------------------------------------------------------------
-def test_llm_rate_limit_retry():
-    from unittest import mock
+def test_llm_rate_limit_detection():
+    from app.core.llm_factory import _is_rate_limit
 
-    from app.core.llm_factory import _RateLimitRetryModel, _is_rate_limit
-
-    # ---- 6.1 _is_rate_limit 三层精确判定 ----
     class Status429(Exception):
         status_code = 429
 
@@ -214,31 +211,10 @@ def test_llm_rate_limit_retry():
     assert _is_rate_limit(Status429()) is True, "status_code=429 应判定为限流"
     assert _is_rate_limit(RequestIdWith429()) is False, "request id 含 429 不应误判为限流"
     assert _is_rate_limit(ErrCode429()) is True, "错误码语境 code: 429 应判定为限流"
-
-    # ---- 6.2 _generate 退避：只重试 max_retries 次，延迟封顶且无抖动 ----
-    class FakeDelegate:
-        model_name = "fake-model"
-
-        def _generate(self, *a, **k):
-            raise Status429()
-
-    sleeps = []
-    model = _RateLimitRetryModel(delegate=FakeDelegate(), max_retries=2, base_delay=1.0)
-    # 限流退避实现在 app/providers/llm.py，mock 其 time/random 模块符号
-    with mock.patch("app.providers.llm.time.sleep", side_effect=lambda s: sleeps.append(round(s, 3))), \
-         mock.patch("app.providers.llm.random.uniform", return_value=0.0):
-        try:
-            model._generate([])
-            exhausted = False
-        except Status429:
-            exhausted = True
-    assert exhausted, "重试耗尽后应抛出原限流异常"
-    assert len(sleeps) == 2, f"应重试 2 次（实际 {len(sleeps)} 次）"
-    assert sleeps == [1.0, 2.0], f"退避延迟应为 [1.0, 2.0]（封顶 5s 内），实际 {sleeps}"
-    return "三层限流判定 + 2 次退避（1s/2s）正确"
+    return "三层限流判定正确"
 
 
-check("LLM 限流重试", test_llm_rate_limit_retry)
+check("LLM 限流判定", test_llm_rate_limit_detection)
 
 
 # ---------------------------------------------------------------------------

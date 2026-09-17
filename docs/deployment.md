@@ -116,7 +116,8 @@ cp .env.example .env
 PYTHONPATH=. ./.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8001
 ```
 
-启动时会执行**轻量自检**（探活基础设施，不真实调用 LLM，避免消耗配额与卡启动），
+启动时会执行**轻量自检**（探活基础设施，不真实调用 LLM——`LLM_HEALTH_CHECK` 默认关闭，
+理由是可用性优先：启动时上游不通不该让服务起不来），
 知识库为空时自动完成首次建索引。深度自检（含真实模型问答）访问 `/test/all`。
 
 ### 3.2 Docker Compose

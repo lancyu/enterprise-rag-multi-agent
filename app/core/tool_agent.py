@@ -77,8 +77,8 @@ SSO 并把员工工号重新注入为服务端事实，而不是让模型去猜�
 被本模块取代的历史机制
 ----------------------
 本次多 Agent 重构之前，这里曾是"单 Agent 一把抓"的实现：模型同时决定
-"要不要检索"与"要不要调工具"。当时删掉了一整套为 RPM=3 账号而造的
-自造路由与档位机制（清单见 ``_archive/removed-selfbuilt-routing-20260915-1314/``）。
+"要不要检索"与"要不要调工具"。当时删掉了一整套为**当时的限频账号（RPM=3）**
+而造的自造路由与档位机制（清单见 ``_archive/removed-selfbuilt-routing-20260915-1314/``）。
 
 多 Agent 架构把那部分职责重新**显式化**了，但方式不同：不再是"用规则猜该走
 哪条链"，而是"用一次模型调用判意图，再由各自独立的 Agent 承担"。
@@ -504,7 +504,7 @@ def run_tool_agent(
         query: 用户本轮提问原文。
         chat_history: 已裁剪的对话历史（轮数/字符裁剪由 memory 层负责）。
         memory_context: 长期记忆文本，注入系统提示。
-        model: 注入用模型（测试传假模型，避免打真实配额）。默认取 ``get_chat_model()``。
+        model: 注入用模型（测试传假模型，避免打真实模型）。默认取 ``get_chat_model()``。
         max_steps: 最多几轮模型决策。默认取 ``config.TOOL_AGENT_MAX_STEPS``。
 
     Returns:

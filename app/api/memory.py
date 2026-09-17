@@ -102,7 +102,7 @@ def memory_detail(user_id: str) -> dict:
 def memory_dream(user_id: str, batch_size: Optional[int] = None) -> dict:
     """手动触发一次记忆蒸馏（把对话归档沉淀为长期知识）。
 
-    默认不自动执行：蒸馏需要大模型调用，对限频账号不友好，
+    默认不自动执行：蒸馏需要真实的大模型调用（一次完整往返），
     交由调用方在低峰期或按需触发。
     """
     try:

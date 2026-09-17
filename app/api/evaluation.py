@@ -19,7 +19,7 @@ def run_retrieval_evaluation(cases: Optional[list] = None, top_k: Optional[int] 
     """跑检索评测。
 
     不传 cases 时使用内置基线用例。每次评测会真实调用 embedding 接口，
-    用例数量请控制（限频账号注意配额）。
+    用例数量请控制（每一轮都是一次真实远端往返，有成本也有耗时）。
     """
     try:
         if cases:

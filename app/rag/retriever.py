@@ -127,8 +127,9 @@ def _latin_lexical_score(query: str, content: str) -> float:
 def rewrite_query(query: str) -> List[str]:
     """生成查询改写变体，用于扩展召回。
 
-    默认关闭：每次改写都要消耗一次大模型调用，对限频账号（如免费档 3 RPM）
-    是沉重负担。仅在 config.QUERY_REWRITE_ENABLED 打开时生效。
+    默认关闭：每次改写都要多一次大模型调用，即**多一次完整往返**（实测 1~2 秒）。
+    本项目当前的目标是把首字延迟压到最低，这点召回提升不足以抵偿，故默认不开。
+    仅在 config.QUERY_REWRITE_ENABLED 打开时生效。
 
     Returns:
         改写后的查询列表（不含原查询）；失败或未启用时返回空列表。
