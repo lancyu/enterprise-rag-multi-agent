@@ -389,15 +389,22 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 | 647-677 | 来源访问控制 ACL（`_parse_source_acl` 660-673） |
 | 678-744 | 服务配置 + `mask_secret` 686-692 + `dump_config` 695-744 |
 
-> ⚠️ **这张表是"整表错位"的高危区**（本项目的校验器只校验「末行是否覆盖文件末尾」，
-> 逐行标签与区间是否对得上是**查不出来**的；`scripts/fix_doc_linenos.py` 也只回填符号
-> 行号与文件总行数，**回填不了这里的区间**）。
+> ⚠️ **这张表是"整表错位"的高危区，而且它只被校验器保护了一半。**
+>
+> **已被保护**：表中的符号数字（`TOOL_AGENT_MAX_STEPS` 130 这类）由校验器第 11 类
+> 逐条比对 AST，写错会红。
+>
+> **未被保护**：22 个**分区区间**。校验器对这类"裸区间"只能查
+> 「界内 + 递增不重叠 + 末段收到文件最后一行」，「起止是否真的落在分区标题上」
+> **查不出来**；`scripts/fix_doc_linenos.py` 也只回填符号行号与文件总行数。
 > 当初「混合意图路由」整块插在「复杂 RAG Agent」分区之后，把后面所有分区**整体下移**了
-> 近百行——数字看着都"在文件界内"，实际却会指向隔壁分区（Embedding 的行号指到数据库、
-> `MILVUS_URI` 指到 Redis）。
-> 所以本表按源码的 `# ====` 分区标题重新对齐过一次，口径是
+> 近百行——区间数字看着都"在文件界内"，实际却会指向隔壁分区（Embedding 的行号指到数据库、
+> `MILVUS_URI` 指到 Redis），而门禁一路绿灯。
+>
+> 所以本表按源码的 `# ====` 分区标题手工对齐，口径是
 > **起 = 分区标题行，止 = 下一分区标题 − 1**（末段止 = 文件总行数）。
-> 改 `app/config.py` 后请一并复核：**这 22 个分区区间与表中的符号行号都不受校验器保护**。
+> **改 `app/config.py` 后必须手工复核这 22 个区间**——这是本项目已知的、唯一
+> 一个"门禁管不到又已经错过三次"的地方。
 
 > 原先占 104-224 的整段「动态路由配置（Flash / Pro 自动选型）」、以及散落的
 > `ROUTING_*` / `LLM_TIER_*` / `CASCADE_*` / `TICKET_*` / `INTENT_*` 等键已随
@@ -1135,7 +1142,7 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 能成立的前提是 `ThreadPoolExecutor.submit` 会**复制提交线程的上下文**，
 所以子线程能读到主线程 set 的值（反过来不行）。
 
-**父块回捞**（`_attach_parent_content` 221-243）只**新增** `parent_content` 字段，
+**父块回捞**（`_attach_parent_content` 226-248）只**新增** `parent_content` 字段，
 绝不动 `content` / `score` / `fused`。所以这个开关对检索指标**零影响**，
 只影响喂给模型的上下文完整度——是"能安全开关的增强"的范本。
 
@@ -1185,7 +1192,7 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 3. **优雅拒答**：置信度低于 `REFUSE_THRESHOLD`（默认 0.25）且没有工具结果时，
    直接回"知识库中没有找到"，宁可转人工也不硬凑。
 
-**置信度怎么算**（`estimate_confidence` 142-164）：
+**置信度怎么算**（`estimate_confidence` 153-175）：
 拿 Top1 的 RRF 融合分，除以**理论上限** `(稠密权重 + 词面权重) / (RRF_K + 1)`。
 为什么这么算？因为 RRF 分只取决于排名，上限是个常数，
 所以这个比值**跨 embedding 模型可比**——而原始向量分做不到（不同模型尺度不同）。
@@ -1948,7 +1955,7 @@ open http://127.0.0.1:8001/static/index.html
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（5 项发现 = 豁免清单 5 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 522 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 558 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -1973,7 +1980,7 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/chunk_metrics.py` | 171 | 切分质量指标 |
 | `scripts/baseline_snapshot.py` | 133 | 冻结基线快照 |
 | `scripts/eval_generation.py` | 91 | 生成侧离线评测 |
-| `scripts/verify_doc_linenos.py` | 503 | **校验本文行号是否因代码改动而失效（十类声明）** |
+| `scripts/verify_doc_linenos.py` | 590 | **校验本文行号是否因代码改动而失效（十一类声明）** |
 | `scripts/check_vector_db.py` | 307 | **向量库连接自检：配置解析 + 连通性 + 读写往返（探针走临时集合，不碰生产数据）** |
 | `scripts/verify_milvus_lite.py` | 123 | **在真实 Milvus 引擎（Lite，免 Docker）上验证向量库适配器** |
 | `scripts/module_inventory.py` | 83 | 模块清单 |
@@ -2048,7 +2055,7 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/eval_generation.py` | 91 | `scripts/fix_doc_linenos.py` | 183 |
 | `scripts/module_inventory.py` | 83 | `scripts/probe_routing.py` | 214 |
 | `scripts/refgraph_scan.py` | 607 | `scripts/seed_enterprise_db.py` | 142 |
-| `scripts/verify_doc_linenos.py` | 503 | `scripts/verify_milvus_lite.py` | 123 |
+| `scripts/verify_doc_linenos.py` | 590 | `scripts/verify_milvus_lite.py` | 123 |
 
 ### 附录 B：数据与配置
 
@@ -2067,8 +2074,8 @@ open http://127.0.0.1:8001/static/index.html
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **522 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
-覆盖十类写法：
+它对本文的 **558 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+覆盖十一类写法：
 
 | # | 声明类型 | 例子 |
 |---|---|---|
@@ -2082,15 +2089,16 @@ python scripts/verify_doc_linenos.py
 | 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（495 行）、`app/config.py`（744 行） |
 | 9 | 区域行号表（裸区间） | `273-328` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:231-306` |
+| 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
 
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：522 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：558 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 
-> **为什么有十类而不是三类？** 因为最初只覆盖了第 1～2 类，于是
+> **为什么有十一类而不是三类？** 因为最初只覆盖了第 1～2 类，于是
 > 附录整块（第 3 类）、章节小计（第 4 类）、模块标题（第 5 类）、
 > 区域表（第 9 类）全都**静默通过**。校验器只认它「认得出」的写法，
 > 认不出的写法不会报错、只会被跳过——所以「全部一致」这个结论，
@@ -2104,6 +2112,16 @@ python scripts/verify_doc_linenos.py
 > 这样悄悄漂移（节点④ 还指向 `model_router.py:526-653`，
 > 而主入口 `route_model` 早已移到 `709-848`）。
 > **越界是硬错，不精确是静默漂移——后者更常见也更难发现。**
+>
+> **第 11 类补的不是「漏掉的写法」，而是一个被默认的前提**：
+> 前十类**全都建立在「行里有文件名」之上**（第 1 类靠行首单元格、
+> 第 6 类靠 `x.py` 单元格、第 7 类靠 `app/` 前缀），
+> 于是表格里的 ``| `CHANNELS` | 70 |`` 和散文里的 `（`_decide` 565-690）`
+> 整片落空——**文件由最近的 `#### 📍 app/x.py` 小标题继承，
+> 正则们只是没想过要去继承它**。补上后声明数 522 → 558，
+> 立刻又抓出 2 处同型漂移（`retriever.py::_attach_parent_content`、
+> `generator.py::estimate_confidence`）。教训是：
+> **补覆盖面时别只看正则，要看它隐含的前提。**
 
 如果只是想重新生成一份结构骨架（用于新增模块时查行号）：
 

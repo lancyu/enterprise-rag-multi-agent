@@ -6,8 +6,8 @@
 但**代码一改行号就漂移**，而文档不会报错、只会悄悄变错。
 靠人肉复核几百条声明不现实，所以把复核本身自动化。
 
-它校验十类声明
---------------
+它校验十一类声明
+----------------
 1. **符号行号**：表格里 ``| `func_name` | 120-145 |`` 形式的行，
    用 AST 取该符号真实的 ``lineno`` / ``end_lineno`` 比对。
    支持类方法（``Class.method``）与函数内嵌套函数。
@@ -33,10 +33,20 @@
    界内 + **末段收到文件最后一行**」——最后一条抓的就是「文件变长、表没跟着长」。
 10. **散文引用（精确性）**：见第 7 类。它与「越界」是两个独立判据：
     越界是硬错，不精确是**静默漂移**，后者更常见也更难发现。
+11. **不带文件名的符号引用**：表格里的 ``| `CHANNELS` | 70 |``（单数字）与散文里的
+    ``（`_decide` 565-690）``。**前十类全都要求行里有文件名**，所以这两类整片落空。
+    文件由最近的 `#### 📍 <文件>` 标题提供，判据同第 7 类（精确等于 AST 跨度）。
+    实测：补上它之后声明数 522 → 557（**此后文档自身还会新增声明，总数以运行输出为准**），
+    并立刻多抓出 2 处同型漂移（`retriever.py::_attach_parent_content`、
+    `generator.py::estimate_confidence`）。
 
-第 3～10 类都是**后来补齐的盲区**。共同的教训是：
+第 3～11 类都是**后来补齐的盲区**。共同的教训是：
 校验器只覆盖了它「认得出」的写法，认不出的写法会静默通过，
 于是「全部一致」这个结论本身是可疑的——**先把覆盖面补全，再去改文档**。
+第 3～10 类补的都是「文档里**有**某种写法但没人校验」；
+第 11 类不同，它补的是**一个结构性前提**：前十类都建立在「行里有文件名」之上，
+而文档里有整整一类引用是靠小标题继承上下文的。**补覆盖面时别只看正则，
+要看它隐含的前提。**
 另外两条教训见 ``_SECTION_DIR_RE`` 与 ``_ROW_RE`` 的注释：
 正则重名会让上下文继承静默失效（把正确声明报成错误）；
 文件名模式漏掉 ``/`` 会让整行被静默跳过（把过期声明放过去）。
@@ -111,6 +121,20 @@ _PROSE_RE = re.compile(r"`?(app/[\w/]+\.py):(\d+)-(\d+)`?")
 _LOOSE_ROW_RE = re.compile(r"^\|\s*[├└]?\s*`([A-Za-z_][\w\.]*\.py)`\s*\|(.*)\|\s*$")
 #: 松散单元格里的 `` `符号名` 120-145 `` 或 `` `常量名` 18 ``
 _LOOSE_NAMED_RE = re.compile(r"`([A-Za-z_]\w*)`\s*(\d+)(?:\s*-\s*(\d+))?")
+#: 第 11 类：**不带文件名的符号引用**。符号名与数字之间只允许空白或 `:`/`|`，
+#: 文件由最近的 `#### 📍 <文件>` 标题提供。写法形如::
+#:
+#:     | `CHANNELS` | 70 | 包内别名……            ← 单数字，`_ROW_RE` 只认区间
+#:     （`_build_raw_model` 195-223 显式写 `max_retries=0`）   ← 散文，且不带文件名
+#:
+#: 前十类**全都要求行里有文件名**（`_ROW_RE` 靠行首单元格、`_LOOSE_ROW_RE` 靠
+#: `x.py` 单元格、`_PROSE_RE` 靠 `app/` 前缀），于是这类写法整片落空。
+#: 注意符号名模式**故意不允许 `/` 和 `.`**：那样才能天然排除 `app/config.py` 这类
+#: 文件名，不必再写一条负向断言。
+_CTX_REF_RE = re.compile(r"`([A-Za-z_]\w*)`\s*[:\|]?\s*(\d+)(?:\s*[-–~]\s*(\d+))?")
+#: 数字后面紧跟中文量词 → 那是计数不是行号（`` `SCENES` 5 次``）。
+#: 含 `行`：宁可漏判「`x` 55 行」这种少见的行号写法，也不要误报「5 行」这种长度。
+_QUANTIFIER_RE = re.compile(r"\s*(次|个|条|项|处|人|天|张|组|份|种|行)")
 #: 纯区间单元格，如 ``**1-583**`` —— 这类交给 `_ROW_RE`，松散流程要跳过
 _STRICT_TOTAL_RE = re.compile(r"^\s*\**\d+\s*-\s*\d+\**\s*$")
 #: 「区域行号表」的裸区间行：``| 178-204 | 向量数据库配置（…）|``。
@@ -359,6 +383,69 @@ def verify(doc_path: str) -> list[str]:
             if not any(s <= start and end <= e for s, e in spans):
                 problems.append(
                     f"L{lineno}: {key}::{sym} 文档写 {start}-{end}，AST 实为 {sorted(set(spans))}"
+                )
+
+    # --- 不带文件名的符号引用（上下文继承到最近的 `#### 📍 <文件>` 标题）---
+    # 第 11 类，也是**最后一块被发现的大盲区**：前十类全都要求行里有文件名，
+    # 所以 ``| `CHANNELS` | 70 |``（单数字）与散文里的 ``（`_decide` 565-690）``
+    # 谁都不管。实测：校验器一路报「522 条全部一致」时，这两类里累计藏着 8 处错值
+    # （6 处由一次性脚本先发现并修好，另 2 处要等本类补上才现身）。
+    #
+    # 判据与第 7 类一致——**须精确等于符号的 AST 跨度**，而不是「不越界」。
+    # 三个**刻意的漏判**，都是为了不误报（沿用第 6 类的取向：宁可漏判不可误判）：
+    #   ① 该文件里找不到同名符号 → 跳过（散文词可能恰好撞名）；
+    #   ② 一行里符号与数字分成两组写（`` `fit` / `_load_idf` | 98-107 / 72-81 ``）
+    #      → 左右配对必然错位，整行弃判（这是实测过的误报来源）；
+    #   ③ 数字后紧跟中文量词 → 计数不是行号。
+    ctx_dir: str | None = None
+    ctx_file: str | None = None
+    for lineno, line in enumerate(lines, 1):
+        m = _SECTION_DIR_RE.match(line)
+        if m:
+            ctx_dir = m.group(1) if m.group(1).endswith("/") else m.group(1) + "/"
+            continue
+        m = _MODULE_HEAD_RE.match(line)
+        if m:
+            ctx_file = resolve(m.group(1), ctx_dir)
+            continue
+        if not ctx_file:
+            continue
+        # 已由前面各类覆盖的写法跳过，避免同一处被报两遍
+        if (_ROW_RE.match(line) or _LOOSE_ROW_RE.match(line)
+                or _ROW_TOTAL_RE.search(line) or _ANY_FILE_RE.search(line)):
+            continue
+        total = totals.get(ctx_file)
+        if total is None:
+            continue
+        matches = list(_CTX_REF_RE.finditer(line))
+        for idx, mm in enumerate(matches):
+            sym = mm.group(1)
+            spans = symbols.get(ctx_file, {}).get(sym)
+            if not spans:                                   # ① 找不到同名符号
+                continue
+            if idx == 0:
+                preceding = line[: mm.start()]
+            else:
+                preceding = line[matches[idx - 1].end(): mm.start()]
+            if "`" in preceding:                            # ② 两组分开写
+                continue
+            start = int(mm.group(2))
+            end = int(mm.group(3)) if mm.group(3) else start
+            if not 1 <= start <= end <= total:              # 越界当计数看，不算声明
+                continue
+            if _QUANTIFIER_RE.match(line[mm.end():]):       # ③ 计数不是行号
+                continue
+            counted += 1
+            if mm.group(3):
+                if (start, end) not in spans:
+                    problems.append(
+                        f"L{lineno}: {ctx_file}::{sym} 文档写 {start}-{end}，"
+                        f"AST 实为 {sorted(set(spans))}"
+                    )
+            elif start not in {s for s, _ in spans}:
+                problems.append(
+                    f"L{lineno}: {ctx_file}::{sym} 文档写第 {start} 行，"
+                    f"AST 实为 {sorted(set(spans))}"
                 )
 
     # --- 通用文件行数声明（含非 Python、含架构图里的无反引号写法）---
