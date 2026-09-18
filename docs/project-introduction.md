@@ -976,7 +976,7 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 | 文件 | 关键行号 | 要点 |
 |---|---|---|
 | `rag_engine.py` | 入口 `37-50` / `61-77` | RAG 五层的兼容门面，外部只认这一个入口；**历史裁剪只在这层做**，避免两处裁剪导致配置静默失效 |
-| `prompts.py` | `PROMPTS` 24-186 / `render` 231-240 | 提示词集中注册；缺变量抛异常而不是填空串（空串会让模型收到残缺指令却不报错） |
+| `prompts.py` | `PROMPTS` 24-221 / `render` 231-240 | 提示词集中注册；缺变量抛异常而不是填空串（空串会让模型收到残缺指令却不报错） |
 | `self_check.py` | `FAST_ITEMS` 18 / `run_self_check` 235-330 | 分层自检：快速项只探本地基础设施，深度项会真调 LLM 默认跳过 |
 | `rate_limit.py` | `RateLimiter` 29-48 | 每 IP 一个 `deque` 存命中时间戳，滑动窗口 60s，默认 20 次/分钟 |
 | `request_ctx.py` | `get/set_query_vector` 139-146 | 用 `contextvars` 存 `(query文本, 向量)`，读时校验文本一致才算命中 |
@@ -2096,17 +2096,29 @@ open http://127.0.0.1:8001/static/index.html
 
 > ⚠️ 访问本机服务时若走系统代理会拿到 502，加 `--noproxy '*'`。
 
-### 6.2 测试与质量门禁（六道）
+### 6.2 测试与质量门禁
+
+**门禁只要跑两条命令**：`pytest tests/ -q` 与 `ruff check app/ scripts/ tests/`。
+其余各项都已**收进 pytest**（下表中带 `└` 的行只是它的细分），不必单独记得跑。
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **544 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **565 passed** |
+| └ 分层依赖契约（P1-2） | `pytest tests/test_layering.py -q` | 通过（下层不得 import 上层）；契约定义在 `pyproject.toml` 的 `[tool.importlinter]` |
+| └ 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（6 项发现 = 豁免清单 6 项） |
+| └ **文档行号校验** | `pytest tests/test_doc_linenos.py -q` | 通过（**628 条声明全一致** + 校验器自身 **21 项**回归） |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
-| **分层依赖契约** | `pytest tests/test_layering.py -q` | 通过（下层不得 import 上层）；契约定义在 `pyproject.toml` 的 `[tool.importlinter]` |
-| 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（6 项发现 = 豁免清单 6 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 627 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+
+**行号校验为什么从命令行搬进 pytest**：它守着上面那 628 条声明，却是唯一一条
+「忘了跑就真的没跑」的命令 —— 其余各项都挂在 `pytest` 上。搬进来之后，
+门禁从四条命令收敛成两条。命令行入口仍然保留（约 0.5 秒，只想看行号时更快）：
+
+```bash
+python scripts/verify_doc_linenos.py            # 只校验行号；退出码 0 = 全一致
+python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动备份原文）
+```
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -2131,7 +2143,7 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/chunk_metrics.py` | 171 | 切分质量指标 |
 | `scripts/baseline_snapshot.py` | 133 | 冻结基线快照 |
 | `scripts/eval_generation.py` | 91 | 生成侧离线评测 |
-| `scripts/verify_doc_linenos.py` | 802 | **校验本文行号是否因代码改动而失效（十三类声明）** |
+| `scripts/verify_doc_linenos.py` | 812 | **校验本文行号是否因代码改动而失效（十三类声明）** |
 | `scripts/check_vector_db.py` | 307 | **向量库连接自检：配置解析 + 连通性 + 读写往返（探针走临时集合，不碰生产数据）** |
 | `scripts/verify_milvus_lite.py` | 123 | **在真实 Milvus 引擎（Lite，免 Docker）上验证向量库适配器** |
 | `scripts/module_inventory.py` | 83 | 模块清单 |
@@ -2192,7 +2204,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_biz_correctness.py` | 769 | `tests/test_chunk_keys.py` | 207 |
 | `tests/test_chunking_baseline.py` | 158 | `tests/test_config_contract.py` | 204 |
 | `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 449 |
-| `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
+| `tests/test_doc_linenos.py` | 333 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
 | `tests/test_fixes_assessment.py` | 252 | `tests/test_infra.py` | 224 |
 | `tests/test_layering.py` | 186 | `tests/test_memory_pipeline.py` | 197 |
 | `tests/test_meta_align.py` | 132 | `tests/test_multi_agent.py` | 953 |
@@ -2210,7 +2222,7 @@ open http://127.0.0.1:8001/static/index.html
 | `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
 | `scripts/fix_doc_linenos.py` | 183 | `scripts/module_inventory.py` | 83 |
 | `scripts/probe_routing.py` | 214 | `scripts/refgraph_scan.py` | 607 |
-| `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 802 |
+| `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 812 |
 | `scripts/verify_milvus_lite.py` | 123 | | |
 
 ### 附录 B：数据与配置

@@ -468,7 +468,17 @@ def verify(doc_path: str) -> list[str]:
             if not spans:
                 continue
             counted += 1
-            if not any(s <= start and end <= e for s, e in spans):
+            # 判据分两种，因为这两种写法在这张表里的**语义不同**：
+            #   - 写成区间（`render` 231-240）＝ 声明的就是完整跨度 → **必须精确等于**；
+            #   - 写成单数字（`FAST_ITEMS` 18）＝ 只报一个起点（符号可能是多行赋值）→ 落在跨度内即可。
+            # ⚠️ 区间曾经只判「被包含」，结果是 `PROMPTS` 24-186 这类**少写 35 行**的声明
+            #    一路绿灯（真实跨度 24-221）：包含判据对「跨度变长」完全不敏感。
+            #    单数字保持宽松是必须的——收紧会把「起点」误判成错误声明。
+            if start == end:
+                ok = any(s <= start and end <= e for s, e in spans)
+            else:
+                ok = (start, end) in spans
+            if not ok:
                 problems.append(
                     f"L{lineno}: {key}::{sym} 文档写 {start}-{end}，AST 实为 {sorted(set(spans))}"
                 )

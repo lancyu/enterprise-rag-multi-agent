@@ -72,11 +72,11 @@ langgraph-enterprise-bot/
 
 | 文件 | 行数 | 混在一起的职责 | 证据 |
 |---|---|---|---|
-| `app/api/chat.py` | 461 | HTTP 端点 + 响应体契约 + 业务编排（invoke 图）+ 持久化 + 记忆整理 + 日志 | `chat_ask` 一个函数里同时出现 `@router.post`、`create_initial_state`、`enterprise_workflow.invoke`、`save_message`、`maybe_consolidate` |
+| `app/api/chat.py` | 465 | HTTP 端点 + 响应体契约 + 业务编排（invoke 图）+ 持久化 + 记忆整理 + 日志 | `chat_ask` 一个函数里同时出现 `@router.post`、`create_initial_state`、`enterprise_workflow.invoke`、`save_message`、`maybe_consolidate` |
 | `app/core/tool_agent.py` | 694 | 提示词 + **手写 JSON 大括号配对扫描器** + 工具 schema 校验 + 多轮决策循环 + 文本形态回捞 + 护栏 | `_iter_json_objects`、`parse_text_tool_calls`、`execute_tool_calls`、`_decide` |
 | `app/db/vector_db.py` | 667 | 3 个后端实现 + 原子文件写 + 进程内索引 + **工厂降级决策** + Milvus 代理网络诊断 | `MemoryVectorStore` / `ChromaVectorStore` / `MilvusVectorStore` / `_loopback_proxy_hint` |
 | `app/core/self_check.py` | 347 | 自检框架（**三份名字集合**）+ 9 项检查 + 直接 SQL + **硬编码业务探针问句** | `FAST_ITEMS` / `DEEP_ITEMS` / `_collect_checks` 三处各写一遍清单；`_check_retrieval` 里硬编码 `"年假有多少天"` |
-| `app/api/dify.py` | 376 | HTTP + **另一套 Bearer 鉴权** + 分数归一化数学 + metadata 白名单 + **10 个运算符的条件过滤引擎** + **75 行手写 OpenAPI** | `_check_auth`、`_normalize_score`、`_match_conditions`、`dify_openapi` |
+| `app/api/dify.py` | 379 | HTTP + **另一套 Bearer 鉴权** + 分数归一化数学 + metadata 白名单 + **10 个运算符的条件过滤引擎** + **75 行手写 OpenAPI** | `_check_auth`、`_normalize_score`、`_match_conditions`、`dify_openapi` |
 
 **反例（职责单一，可作为其他模块的样板）**：`app/graph/edges.py`(95)、`app/core/routing/similarity.py`(138)、`app/rag/reorder.py`(28)、`app/utils/logger.py`(74)。
 
@@ -392,11 +392,12 @@ app/tools → db                                                          ← �
 | P0-2 | ✅ 已完成 | 对外故障文案收敛到 `app/core/errors.py::public_detail`（固定前缀 + trace_id）。**实际修复面比审查时估计的大**：除 SSE 回显 `str(exc)` 外，还堵掉两条绕过异常分支的走私通道 —— `/workflow/execute` 原样透出内部 `error_msg`、`human_fallback_node` 把 `error_msg[:60]` 塞进随响应体下发的 `trace.detail`。新增 `tests/test_error_boundary.py`（11 项），逐条反向验证过；另加两条结构约束（边界层不绑定异常对象、凭证只经 `trace_ref` 取） |
 | P0-3 | ✅ 已完成 | 「格式 → 解析器」收敛为**唯一分发表** `_SUFFIX_LOADERS` + 唯一入口 `doc_loader.load_file`（`SUPPORTED_SUFFIX` 改为由它派生）；`knowledge_upload_file` 改走这个入口，不再自己写一份后缀分发。**根因**：上传那条落到最弱一级 `PyPDFLoader`、重建那条走完整三级降级，同一个 PDF 产出两份文本，重建会**静默覆盖**早先上传的内容。顺带把「过滤空白段落」从 `load_all_documents` 下沉到 `load_file`——留在调用方只会让上传链路漏掉它。新增 `tests/test_upload_rebuild_alignment.py`（8 项），**5 条反向验证全部命中**；其中「`SUPPORTED_SUFFIX` 是不是派生的」**只能用 AST 判据**（两边取值相等时 `==` 恒真，退回不会变红，第一版就踩了这个坑） |
 | P0-4 | ⚠️ **已完成，但原判断需订正** | 原写的证据「`trace.jsonl` 会记 query 原文与检索片段」**实测不成立**：本地 1188 条记录里全部 span attr 都是长度 / 计数 / 布尔 / 枚举（`hits`、`degraded`、`scene="policy"`…），没有一条含正文；唯一出现过的个人数据是 2026-09-15 那批记录里的 `employee: "E1001"`（工号，当前代码已不再写该字段）。**结论：这条更该做，理由比原判断更硬** —— `span(name, **attrs)` 与 `span.attrs[k] = v` 都是**开放字段**，任何一处将来写下 `span("retrieve", query=query)` 就会立刻把原文落进磁盘且无任何机制察觉；「现在没人这么写」不是可维护的保证。落地：新增 `app/core/trace_mask.py` 作为**唯一脱敏入口**，在 `end_trace` 里做（不是 `_persist` 里）—— 因为返回值会挂进响应体的 `span_tree`，两处各脱各的必然分叉。判据只有一条**长度**（枚举天生短、正文天生长），凭据与 PII 另走形态规则。新增 `tests/test_trace_mask.py`（17 项），**7 条反向验证全部命中**。过程中测试先变红揪出一处真误报：手机号边界用 `(?<!\d)` 会把 `trace_id`（16 位十六进制）里恰好藏着的一段号码当手机号替换掉，已收紧为字母数字边界 |
-| P1-1 | ⚠️ **方向已订正** | 原写"建 CI"，与本仓库 2026-09-14 的**既定决定**（本仓库不开源，不重建 `.github/`、不建 pre-commit）直接冲突。改为**本地一键门禁**：把行号校验器纳入 pytest（四道 → 三道），单独脚本承载配置分区表那一类 |
+| P1-1 | ✅ 已完成 | 原写"建 CI"，与本仓库 2026-09-14 的**既定决定**（本仓库不开源，不重建 `.github/`、不建 pre-commit）直接冲突。改为**本地门禁收敛**：行号校验器纳入 pytest 后，门禁从四条命令变成**两条**（`pytest` + `ruff`），命令行入口保留 |
+| P1-7 | ✅ 已完成 | 新增 `tests/test_doc_linenos.py`（**21 项**）：真文档全绿 + 命令行退出码双向 + **十三类逐类变异反向验证** + 该绿的要绿（中文量词后面那个数字是计数不是行号）。两个设计要点已落地：变异施加在**文档副本**上；锚点找不到时 **fail 不 skip**。**顺带查出一处真缺陷**：第 6 类的「被包含」判据放过了 `PROMPTS` 24-186（真实跨度 24-221，**少写 35 行**）—— 已把区间收紧为精确比对（单数字仍宽松，因为它声明的是起点），收紧后全文档**只多报这一处、零误报** |
 | P1-2 | ✅ 已完成 | `[tool.importlinter]` 六层契约 + `tests/test_layering.py`（5 项，含「契约真的会红」的自检）。**豁免 15 条按理由分三类登记，不是待修缺陷清单**；`unmatched_ignore_imports_alerting = error` + 条数棘轮（只减不增）。实测踩到一个坑：`python -m importlinter.cli` **没有 `__main__` 入口**，会静默返回 0 —— 一条永远"通过"的门禁 |
 | P1-6 | ⏳ 待做 | 第 3 批；做完后 `app.utils.embedding -> app.providers.embeddings` 这条 C 类豁免应当消失 |
 | P1-3 ~ P1-5 | ⏳ 待做 | 第 3 批 |
-| P0-5 / P1-7 | ⏳ 待做 | 第 1 批遗留 |
+| P0-5 | ⏳ 待做 | 第 1 批遗留（第 14 类语义守卫 + 节点/条件边口径统一） |
 
 **顺手记下的一个工具缺口**（修 P0-1 时踩到）：`scripts/fix_doc_linenos.py`
 **处理不了 config 分区表**（校验器第 13 类）。那张表 25 行会随 `app/config.py` 的
