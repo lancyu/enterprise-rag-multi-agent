@@ -310,6 +310,34 @@ def test_class13_reports_when_its_own_marker_disappears(problems):
     _assert_reported(problems(_replace("配置分区（按行号）：", "配置分区：")), "定位标记")
 
 
+def test_class14_a_nonexistent_symbol_name_is_reported(problems):
+    """第 14 类：**文档点名的符号必须真实存在**（唯一不看数字的一类）。
+
+    P0-5 的验收条件就是这条：把那个不存在的旧函数名写回文档，校验器必须变红。
+    这个错名字在文档里活了很久，同期校验器报的是「598 条声明全部一致」——
+    因为它压根没有数字，**行号校验永远抓不到它**。
+    """
+    items = problems(
+        _replace("`error_route_edge`（生成出口）", "`answer_route_edge`（生成出口）")
+    )
+    assert any("answer_route_edge" in item and "不存在" in item for item in items), items
+
+
+def test_class14_accepts_a_real_symbol_name(mini_doc):
+    """反向：真实存在的名字不能报。"""
+    assert mini_doc("| 条件边 | `scene_route_edge` | 路由五路 |") == []
+
+
+def test_class14_does_not_fire_on_a_suffix_fragment(mini_doc):
+    """反向：`` `_route_edge` `` 是在说「以什么结尾」，不是在点名符号 —— 不能报。
+
+    这条来自实测：本类刚上线时，文档里「以 `_route_edge` 结尾的那个名字」
+    这种**说明性写法**被判成了「符号不存在」。**命名的判据必须比描述更严**：
+    首字符不是字母的一律不认。
+    """
+    assert mini_doc("| 说明 | 以 `_route_edge` 结尾的名字必须真实存在 |") == []
+
+
 # ---------------------------------------------------------------------------
 # 3. 它也必须克制（该绿的要绿）
 # ---------------------------------------------------------------------------

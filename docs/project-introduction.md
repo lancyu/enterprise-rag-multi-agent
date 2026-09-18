@@ -35,7 +35,7 @@
 | 层次 | 选型 | 说明 |
 |---|---|---|
 | Web 框架 | **FastAPI** | 异步、自带 OpenAPI 文档 |
-| 工作流引擎 | **LangGraph** | 把问答拆成 8 个节点组成的有向图 |
+| 工作流引擎 | **LangGraph** | 把问答拆成 9 个节点组成的有向图 |
 | 大模型 | **OpenAI 兼容协议**（默认 Moonshot / Kimi） | 换供应商只改 `.env` |
 | 向量检索 | **Milvus** / **Chroma** / 内置内存库 | 三后端可切（`VECTOR_DB_TYPE`），默认内存库零依赖即可跑 |
 | 词面检索 | **自研 BM25 倒排索引** | 不引入 Elasticsearch，250 行搞定 |
@@ -47,9 +47,9 @@
 |---|---|
 | 应用代码 | **16526 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
-| LangGraph 节点 | 8 个 + 2 个条件分支 |
+| LangGraph 节点 | **9 个节点 + 3 条条件边** |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
-| 测试 | 34 个文件（30 个 `test_*.py`），`pytest` **539 项全绿** |
+| 测试 | 36 个文件（32 个 `test_*.py`），`pytest` **565 项全绿** |
 | 内置语料 | 12 个文档，切分后 **176 个片段** |
 
 ---
@@ -155,7 +155,7 @@
     │          │        │answer ⑦      │ 反问用户  决策失败   不支持FC  有证据
     │          │        │受控生成      │  → END   → ⑧人工兜底 →simple_rag →生成
     │          │        └──────┬───────┘
-    │          │     answer_route_edge
+    │          │     error_route_edge
     └──────────┴───────┬───────┴──────►【END】
                        ▼
                 ┌─────────────┐
@@ -164,8 +164,10 @@
                        └────────────►【END】
 ```
 
-**四个条件分支**：`scene_route_edge`（路由五路）、`tool_route_edge`（工具四去向）、
-`answer_route_edge`（生成出口）、以及直答出口直达 `END`。
+**三条条件边**：`scene_route_edge`（路由五路）、`tool_route_edge`（工具四去向）、
+`error_route_edge`（生成出口）。直答出口（`smalltalk` / `out_of_scope`）走的是**普通边**
+直达 `END`，不经过任何条件函数 —— 把它们算进「条件分支」会让节点数与边数同时对不上
+（实际是 **9 节点 / 3 条件边**；流式端点用的前置子图少一个 `generate_answer`，是 8 节点）。
 
 **三个「看似可省但不能省」的位置约定（改动前必读）**：
 
@@ -889,7 +891,7 @@ schema 里（模型要填），但它**不是**授权事实——没有身份可
 LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在那个**副本**里
 调用工具函数——在工具内 `set` 的值，调用方读不到。
 
-症状极其隐蔽：`search_knowledge` 明明检索到 5 条片段，`agent_node` 里
+症状极其隐蔽：`search_knowledge` 明明检索到 5 条片段，`tool_node` 里
 `get_retrieved_docs()` 却是空的 → 生成层拿不到证据 → 置信度 0 触发拒答，
 用户看到「知识库中没有找到」。**而工具日志显示检索成功。**
 
@@ -2103,10 +2105,10 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **565 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **568 passed** |
 | └ 分层依赖契约（P1-2） | `pytest tests/test_layering.py -q` | 通过（下层不得 import 上层）；契约定义在 `pyproject.toml` 的 `[tool.importlinter]` |
 | └ 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（6 项发现 = 豁免清单 6 项） |
-| └ **文档行号校验** | `pytest tests/test_doc_linenos.py -q` | 通过（**628 条声明全一致** + 校验器自身 **21 项**回归） |
+| └ **文档行号校验** | `pytest tests/test_doc_linenos.py -q` | 通过（**654 条声明全一致** + 校验器自身 **24 项**回归） |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
@@ -2143,7 +2145,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `scripts/chunk_metrics.py` | 171 | 切分质量指标 |
 | `scripts/baseline_snapshot.py` | 133 | 冻结基线快照 |
 | `scripts/eval_generation.py` | 91 | 生成侧离线评测 |
-| `scripts/verify_doc_linenos.py` | 812 | **校验本文行号是否因代码改动而失效（十三类声明）** |
+| `scripts/verify_doc_linenos.py` | 857 | **校验本文行号是否因代码改动而失效（十四类声明）** |
 | `scripts/check_vector_db.py` | 307 | **向量库连接自检：配置解析 + 连通性 + 读写往返（探针走临时集合，不碰生产数据）** |
 | `scripts/verify_milvus_lite.py` | 123 | **在真实 Milvus 引擎（Lite，免 Docker）上验证向量库适配器** |
 | `scripts/module_inventory.py` | 83 | 模块清单 |
@@ -2204,7 +2206,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `tests/test_biz_correctness.py` | 769 | `tests/test_chunk_keys.py` | 207 |
 | `tests/test_chunking_baseline.py` | 158 | `tests/test_config_contract.py` | 204 |
 | `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 449 |
-| `tests/test_doc_linenos.py` | 333 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
+| `tests/test_doc_linenos.py` | 361 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
 | `tests/test_fixes_assessment.py` | 252 | `tests/test_infra.py` | 224 |
 | `tests/test_layering.py` | 186 | `tests/test_memory_pipeline.py` | 197 |
 | `tests/test_meta_align.py` | 132 | `tests/test_multi_agent.py` | 953 |
@@ -2222,7 +2224,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
 | `scripts/fix_doc_linenos.py` | 183 | `scripts/module_inventory.py` | 83 |
 | `scripts/probe_routing.py` | 214 | `scripts/refgraph_scan.py` | 607 |
-| `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 812 |
+| `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 857 |
 | `scripts/verify_milvus_lite.py` | 123 | | |
 
 ### 附录 B：数据与配置
@@ -2242,8 +2244,8 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **627 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
-覆盖十三类写法：
+它对本文的 **654 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+覆盖十四类写法：
 
 | # | 声明类型 | 例子 |
 |---|---|---|
@@ -2260,15 +2262,16 @@ python scripts/verify_doc_linenos.py
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
 | 12 | **区间式引用**（符号 + 括号 / 裸文件名 + 冒号 / 表格行首文件名 + 描述里匿名区间） | `state.py`：`GraphState`（50-126）、`config.py:381-390` |
 | 13 | **config 分区表**（真值来自源码 `# ====` 横幅，**不在 AST 里**） | `47-54` 项目路径、`678-744` 服务配置 |
+| 14 | **文档点名的符号必须真实存在**（**唯一不看数字的一类**） | `error_route_edge`、`tool_node` |
 
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：627 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：654 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 
-> **为什么有十三类而不是三类？** 因为最初只覆盖了第 1～2 类，于是
+> **为什么有十四类而不是三类？** 因为最初只覆盖了第 1～2 类，于是
 > 附录整块（第 3 类）、章节小计（第 4 类）、模块标题（第 5 类）、
 > 区域表（第 9 类）全都**静默通过**。校验器只认它「认得出」的写法，
 > 认不出的写法不会报错、只会被跳过——所以「全部一致」这个结论，
@@ -2311,6 +2314,14 @@ python scripts/verify_doc_linenos.py
 > 它已经失效四次（最近一次整表下移近百行，门禁全绿）。
 > 教训：**当一类声明的真值不在 AST 里时，别急着把它划进「手工复核」，
 > 先找找源码里还有没有别的稳定锚点**（横幅、约定俗成的注释块、生成器输出……）。
+>
+> **第 14 类换的是「守什么」，不是「怎么守」**：前 13 类**全部是关于数字的**，
+> 它守的却是**名字**。这不是又补了一种写法，而是承认了一件事——
+> **「行号全对」与「话是对的」是两件事**。600 条声明全绿的同时，
+> 文档里可以写着一个代码里根本没有的函数名；读者照着去搜，搜不到，
+> 最后怀疑的是自己。这类错误**行号校验永远抓不到**，因为它压根没有数字。
+> 教训：**门禁守什么，取决于你以为它在守什么；而最危险的误解，
+> 是以为它在守「文档是对的」。**
 
 如果只是想重新生成一份结构骨架（用于新增模块时查行号）：
 

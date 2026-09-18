@@ -54,7 +54,7 @@ memory_load ──► agent（一次 function calling 决策）──► generat
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ 编排层  app/graph/  ——  9 节点 / 4 条件分支的 LangGraph 有向图          │
+│ 编排层  app/graph/  ——  9 节点 / 3 条件边的 LangGraph 有向图           │
 │   只做"谁在什么时候被调用"，不含任何业务判断（业务判断都在 Agent 里）      │
 └──────────────────────────────────────────────────────────────────────┘
                                   ▲
@@ -440,7 +440,7 @@ tool_degraded     → simple_rag         # 改道
 
 | 删除项 | 位置 | 理由 |
 |---|---|---|
-| 单 Agent 节点 `agent_node` | `app/graph/nodes.py` | 职责被五个 Agent 取代；留着会产生"两条都能走"的歧义 |
+| 单 Agent 节点（旧名 agent_node，随本次重构删除） | `app/graph/nodes.py` | 职责被五个 Agent 取代；留着会产生"两条都能走"的歧义 |
 | 自造意图路由（词表 + 边际门控 + 灰区仲裁） | `app/core/intent_*` | 八模块规则时代"修 A 坏 B"，且与路由 Agent 是两套并行的判断 |
 | 动态路由 / 档位机制（Flash / Pro 选型、`model_router`、`cascade`） | `app/core/model_router.py` 等 | 改用不限流模型 + function calling 后"只有一个模型"，升档没有落点 |
 | 自造限流重试包装层 | `app/core/llm_factory.py` 旧实现 | SDK 重试 + 自造退避两层叠加会把 30s 超时放大到 100s |

@@ -79,6 +79,22 @@
 
 现行约束请看 [`../README.md`](../README.md) 与 [`deployment.md`](deployment.md)。
 
+### ⚠️ 第二个坑：把「当时的图拓扑」当成现状
+
+`history/` 里多处写着 **8 节点 / 2 条件分支**（单 Agent 时期的拓扑），
+也有写成 9 节点 / 4 条件分支的。**现状是 9 节点 / 3 条件边**
+（`memory_load → router → {smalltalk, out_of_scope, simple_rag, complex_rag, tool} → …`；
+三条条件边分别是 `scene_route_edge` / `tool_route_edge` / `error_route_edge`）。
+
+三个数对不上的原因很简单：**直答出口（`smalltalk` / `out_of_scope`）走的是普通边**，
+有人把它算进「条件分支」，于是同一个仓库出现过五种说法。
+现行文档（`../README.md`、`project-introduction.md`、`multi-agent-architecture.md`）
+已统一为「9 节点 / 3 条件边」，`history/` 里的旧说法**不改写**——
+它们记的是当时的拓扑，当时确实长那样。
+
+> 这条口径现在由 `scripts/verify_doc_linenos.py` 的**第 14 类**守着：
+> 文档里以 `_edge` / `_node` 结尾的符号名必须真实存在（行号全绿时也能查出错名字）。
+
 按主题分布：
 
 | 主题 | 文档 |
