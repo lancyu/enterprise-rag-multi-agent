@@ -10,7 +10,10 @@ span 树模型（对齐 OpenTelemetry / Langfuse / LangSmith 的 trace=span 树�
     - 嵌套的 `with span` 通过 contextvars 维护的「当前 span 栈」自动形成父子树：
       进入时压栈（栈顶即父节点），退出时弹栈；
     - 一次请求的所有 span 汇总成一棵树，`end_trace()` 序列化后挂到响应字段、
-      并追加写入 trace.jsonl 供离线回放。
+      并追加写入 trace.jsonl 供离线回放；
+    - **写盘与下发之前统一过一层脱敏**（`app/core/trace_mask.py`）：
+      span 的 attrs 是开放字段，任何一处写进正文或凭据都会随日志落盘，
+      脱敏是唯一那道机制性的闸。
 """
 import contextvars
 import json
@@ -19,6 +22,8 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional
+
+from app.core.trace_mask import mask_tree
 
 # 每个请求上下文独立的 trace_id（线程/协程安全透传）
 _trace_id_var: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
@@ -124,16 +129,22 @@ def begin_trace(trace_id: Optional[str] = None) -> str:
 
 
 def end_trace(persist: bool = True) -> List[Dict[str, Any]]:
-    """收集整棵 span 树，返回其序列化结构，并（可选）持久化到 trace.jsonl。
+    """收集整棵 span 树，**脱敏**后返回其序列化结构，并（可选）持久化到 trace.jsonl。
+
+    脱敏放在**这里**、而不是 ``_persist`` 内部，是因为：``end_trace`` 的返回值会
+    挂进响应体（``/chat/ask`` 与 ``/workflow/execute`` 的 ``span_tree``）。
+    如果落盘脱一次、外发不脱，同一份数据就有了两套口径；反过来在 ``_persist`` 里
+    脱，返回值仍然是原文。**两处各脱各的必然分叉**——本项目反复踩的就是这个坑。
+    只做一次、两处共用同一份结果，口径才唯一。
 
     Returns:
-        span 树列表（每个元素是根 span 的 dict，含嵌套 children）。
+        span 树列表（每个元素是根 span 的 dict，含嵌套 children），已脱敏。
     """
     roots = _root_spans_var.get() or []
     if not roots:
         return []
     base_start = min(r.start for r in roots)
-    tree = [r.to_dict(base_start) for r in roots]
+    tree = mask_tree([r.to_dict(base_start) for r in roots])
     if persist:
         _persist(tree)
     return tree

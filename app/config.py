@@ -454,6 +454,15 @@ LANGSMITH_PROJECT: str = os.getenv("LANGSMITH_PROJECT", "langgraph-enterprise-bo
 # 自托管 LangSmith 时填写；留空走官方 SaaS（smith.langchain.com）
 LANGSMITH_ENDPOINT: str = os.getenv("LANGSMITH_ENDPOINT", "")
 
+# ---- trace 落盘前的脱敏（见 app/core/trace_mask.py）----
+# 默认**开启**。理由：脱敏的失效方向不对称——多脱一层只是少看几个字段，
+# 少脱一层是正文/凭据已经写进磁盘，不可回收。关闭时会打一条 WARNING 留痕。
+TRACE_MASK_ENABLED: bool = _env_bool("TRACE_MASK_ENABLED", True)
+# 单个字符串值的原文保留上限：≤ 该值原样保留（枚举/标识符天然短），
+# 超出则截为「前 N 字…<共 M 字>」。**设 0 = 只留长度、彻底不留正文**。
+# 默认 64 的依据：实测现有 trace 最长字符串 41 字（tools 清单），留 1.5 倍余量。
+TRACE_MASK_MAX_CHARS: int = int(_env("TRACE_MASK_MAX_CHARS", "64"))
+
 # ============================================================
 # Embedding 缓存配置（见 app/utils/cache.py）
 # ============================================================
@@ -747,6 +756,12 @@ def dump_config() -> dict:
         "observability": {
             "langsmith_enabled": bool(LANGSMITH_ENABLED and LANGSMITH_API_KEY),
             "langsmith_project": LANGSMITH_PROJECT,
+            # 报出来是为了「配了能看出生效没有」——脱敏开关如果只能去读 .env
+            # 确认，那它和伪配置没区别。
+            "trace_mask": {
+                "enabled": TRACE_MASK_ENABLED,
+                "max_chars": TRACE_MASK_MAX_CHARS,
+            },
         },
         "chat": {"max_history": MAX_CHAT_HISTORY, "session_ttl": SESSION_TTL},
         "agents": {

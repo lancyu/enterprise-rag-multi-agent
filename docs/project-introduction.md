@@ -5,7 +5,7 @@
 >
 > | 文档 | 侧重 |
 > |---|---|
-> | `README.md`（495 行） | 怎么装、怎么跑、有哪些接口 |
+> | `README.md`（497 行） | 怎么装、怎么跑、有哪些接口 |
 > | `项目学习指南.md`（965 行） | 面试问答、话术素材、必背数字 |
 > | **本文**（`docs/project-introduction.md`） | **每个模块干什么、代码在哪几行、底层用了什么知识** |
 >
@@ -45,11 +45,11 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **16269 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **16526 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | 8 个 + 2 个条件分支 |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
-| 测试 | 33 个文件（29 个 `test_*.py`），`pytest` **522 项全绿** |
+| 测试 | 34 个文件（30 个 `test_*.py`），`pytest` **539 项全绿** |
 | 内置语料 | 12 个文档，切分后 **176 个片段** |
 
 ---
@@ -75,7 +75,7 @@
 │                  app/utils/          加载 / 缓存 / 校验 / 日志  │
 └─────────────────────────────────────────────────────────────┘
                           ▲
-                          │ 全局配置：app/config.py（765 行）
+                          │ 全局配置：app/config.py（780 行）
                           │ 贯穿所有层：app/core/tracing.py（全链路 span 树）
 ```
 
@@ -188,7 +188,7 @@
 |---|---|---|
 | `app/__init__.py` | 1 | 包声明 |
 | `app/main.py` | **1-240** | 应用装配：lifespan、中间件、路由注册、全局异常 |
-| `app/config.py` | **1-765** | 全局配置中心（所有环境变量集中于此） |
+| `app/config.py` | **1-780** | 全局配置中心（所有环境变量集中于此） |
 
 ### 3.2 `app/api/` — HTTP 接口层（1537 行）
 
@@ -221,7 +221,7 @@
 | `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
 | `workflow_graph.py` | **1-192** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（5499 行）
+### 3.4 `app/core/` — 调度与基础能力（5741 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -247,7 +247,7 @@
 | `request_ctx.py` | **1-213** | 请求级共享：query 向量 / 来源白名单 / 本轮证据（授权与证据不由模型回传） |
 | `self_check.py` | **1-347** | 启动自检与健康检查（9 项） |
 | `prompts.py` | **1-240** | 提示词集中注册表 |
-| `tracing.py` | **1-161** | 全链路 span 树 + trace_id 贯穿 |
+| `tracing.py` | **1-172** | 全链路 span 树 + trace_id 贯穿 |
 | `observability.py` | **1-39** | LangSmith 追踪接入 |
 | `rag_engine.py` | **1-109** | RAG 五层的兼容门面 |
 | `rate_limit.py` | **1-64** | 按 IP 的内存滑动窗口限流 |
@@ -359,7 +359,7 @@
 `AUTH_EXEMPT_PATHS` 里的 Dify 接口有自己的 Key 校验，所以两条鉴权链**不能互相替代**。
 CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"本地能跑、上线跨域全挂"，代码里已自动关闭凭据。
 
-#### 📍 `app/config.py`（1-765）
+#### 📍 `app/config.py`（1-780）
 
 配置分区（按行号）：
 
@@ -379,17 +379,17 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 | 401-425 | 融合权重与阈值 |
 | 426-432 | 词面倒排索引配置（BM25） |
 | 433-444 | Rerank 精排 |
-| 445-456 | 可观测性接入（LangSmith） |
-| 457-462 | Embedding 缓存配置 |
-| 463-467 | 入站限流配置 |
-| 468-499 | 记忆系统配置（短期记忆 + 长期记忆） |
-| 500-506 | 切片策略（基础：分片大小 + 重叠） |
-| 507-586 | 切片策略（配置化 + 策略可替换） |
-| 587-607 | PDF 图片抽取 |
-| 608-645 | Dify 兼容接口 |
-| 646-667 | 入站鉴权（fail-closed） |
-| 668-698 | 来源访问控制 ACL（`_parse_source_acl` 681-694） |
-| 699-765 | 服务配置 + `mask_secret` 707-713 + `dump_config` 716-765 |
+| 445-465 | 可观测性接入（LangSmith 445-455 + **trace 脱敏** 457-465） |
+| 466-471 | Embedding 缓存配置 |
+| 472-476 | 入站限流配置 |
+| 477-508 | 记忆系统配置（短期记忆 + 长期记忆） |
+| 509-515 | 切片策略（基础：分片大小 + 重叠） |
+| 516-595 | 切片策略（配置化 + 策略可替换） |
+| 596-616 | PDF 图片抽取 |
+| 617-654 | Dify 兼容接口 |
+| 655-676 | 入站鉴权（fail-closed） |
+| 677-707 | 来源访问控制 ACL（`_parse_source_acl` 690-703） |
+| 708-780 | 服务配置 + `mask_secret` 716-722 + `dump_config` 725-780 |
 
 > ⚠️ **这张表是"整表错位"的高危区。**它以前只被校验器保护了一半，现在两半都保护了。
 >
@@ -896,15 +896,15 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 修法是把「可变对象」放进 ContextVar：`copy_context()` 复制的是**映射**，
 值仍是同一个对象引用，因此对对象内部状态的修改两边都可见。
 
-#### 📍 `app/core/tracing.py`（1-161）—— 全链路追踪
+#### 📍 `app/core/tracing.py`（1-172）—— 全链路追踪
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `SpanNode` | 38-58 | span 节点 |
-| `span` | 83-106 | **contextmanager**：进入/退出自动记录 |
-| `begin_trace` | 112-123 | 开启一次请求的根 span |
-| `end_trace` | 126-139 | 结束并持久化整棵 span 树 |
-| `_persist` | 142-161 | 落盘 `logs/trace.jsonl` |
+| `SpanNode` | 43-63 | span 节点 |
+| `span` | 88-111 | **contextmanager**：进入/退出自动记录 |
+| `begin_trace` | 117-128 | 开启一次请求的根 span |
+| `end_trace` | 131-150 | 结束 → **脱敏** → 持久化整棵 span 树 |
+| `_persist` | 153-172 | 落盘 `logs/trace.jsonl` |
 
 **实现原理（小白版）**：
 用 `with span("xxx"):` 包住一段代码，进入时记开始时间并把新节点**压栈**，
@@ -920,6 +920,56 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 
 **设计取舍**：落盘失败静默吞掉。可观测性永远不能反过来影响主流程。
 耗时用 `perf_counter`（单调时钟），不受系统时间调整影响。
+
+**脱敏放在 `end_trace` 而不是 `_persist` 里**（P0-4）：`end_trace` 的返回值会挂进
+响应体（`/chat/ask` 与 `/workflow/execute` 的 `span_tree`）。落盘脱一次、外发不脱，
+同一份数据就有了两套口径；反过来在 `_persist` 里脱，返回值仍是原文。
+**两处各脱各的必然分叉**——本项目反复踩的就是这个坑。
+
+#### 📍 `app/core/trace_mask.py`（1-231）—— trace 脱敏
+
+| 组件 | 行号 | 说明 |
+|---|---|---|
+| `is_enabled` | 123-127 | 总开关（默认开） |
+| `_max_chars` | 130-160 | 单值原文保留上限；非法值退到**更严**的一档 |
+| `mask_text` | 173-187 | **先形态、后长度**两步 |
+| `mask_value` | 190-202 | 递归进 dict / list |
+| `mask_tree` | 205-223 | **唯一入口**，落盘与下发共用 |
+
+**它守的是"将来"，不是"现在"**：审查报告原本写的证据是「trace 会记 query 原文与
+检索片段」——**实测不成立**（本地 1188 条记录里，全部 span attr 都是长度 / 计数 /
+布尔 / 枚举，没有一条含正文）。但 `span(name, **attrs)` 与 `span.attrs[k] = v`
+都是**开放字段**，任何一处将来写下 `span("retrieve", query=query)` 就会立刻把原文
+落进磁盘，而且**不会有任何机制察觉**。「现在没人这么写」不是可维护的保证。
+
+**分类判据只有一条：长度。** 长度 ≤ `TRACE_MASK_MAX_CHARS`（默认 64）原样保留，
+超出则截为 `前 N 字…<共 M 字>`；设成 `0` 则所有字符串**只留长度**。
+为什么不认键名：键名会漂移（`query` / `user_query` / `question` / `text`…），
+而**枚举天生短、正文天生长**——用长度区分二者不依赖任何需要维护的名单。
+
+**凭据与 PII 走另一条路：形态规则**（与长度无关，短文本里照样替换）——
+身份证 → 手机号 → 邮箱 → `sk-` 密钥 → `Bearer` → `key=value`。
+⚠️ 手机号与身份证的边界必须是**字母数字边界**（`(?<![0-9A-Za-z])`），
+不能是 `(?<!\d)`：`trace_id` 是 16 位十六进制串，`b8c7b17477754875` 里恰好藏着
+一段合法的 11 位手机号形态，用 `(?<!\d)` 会把正常的 trace_id 整段替换成 `<PHONE>`。
+这条是**测试先变红才发现**的（`test_trace_id_shaped_like_a_phone_number_is_left_alone`）。
+
+**默认档不改变任何既有字段**：实测现有 trace 最长字符串 41 字（`tools` 清单），
+64 留了约 1.5 倍余量；回归用例的语料**从 AST 派生**（扫描 `app/` 里全部
+`attrs[...] =` 的字符串字面量与 `span("name")`），并在本地存在真实 `trace.jsonl`
+时整份再过一遍，逐字节比对。理由是：脱敏如果把现有可观测性打坏了，
+上线第一天就会被关掉，**然后永远不再是护栏**。
+
+**与 `config.mask_secret` 的关系**：不复用，也不重复。后者做的是「**已知**某个值是
+密钥 → 打印时前 6 后 4」，前提是已经知道那是密钥；本模块面对的是**不知道哪一段是
+密钥**的自由文本，判据只能是形态。两者的输入前提相反，合并会让两边都不成立。
+
+**与 `app/utils/auth_header.py` 的关系**：`tests/test_dify_api.py` 有一条「Bearer
+解析只许出现在一个模块」的护栏，它认的是**语法形态**（正则里含 `bearer`），
+而形态分不出「把凭证抽出来给鉴权用」与「把凭证替换成占位符」。故在
+`_BEARER_OTHER_PURPOSE` 里显式登记了这一条豁免并写明理由，
+且**反向校验僵尸豁免**（清单里的条目若不再被报出就变红）——
+与 `tests/deadcode_allowlist.py` 同一套语义。
 
 #### 📍 其余 core 模块
 
@@ -2050,12 +2100,12 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **522 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **539 passed** |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（6 项发现 = 豁免清单 6 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 619 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 627 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -2092,7 +2142,7 @@ open http://127.0.0.1:8001/static/index.html
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（16269 行）**
+**应用代码 `app/`（16526 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -2101,7 +2151,7 @@ open http://127.0.0.1:8001/static/index.html
 | `api/evaluation.py` | 81 | `api/knowledge.py` | 182 |
 | `api/memory.py` | 134 | `api/routing.py` | 110 |
 | `api/test.py` | 33 | `api/workflow.py` | 152 |
-| `config.py` | 765 | `core/__init__.py` | 1 |
+| `config.py` | 780 | `core/__init__.py` | 1 |
 | `core/errors.py` | 72 | `core/llm_factory.py` | 23 |
 | `core/observability.py` | 39 | `core/prompts.py` | 240 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 64 |
@@ -2113,7 +2163,8 @@ open http://127.0.0.1:8001/static/index.html
 | `core/routing/signals.py` | 327 | `core/routing/similarity.py` | 138 |
 | `core/routing/vocabulary.py` | 114 | `core/self_check.py` | 347 |
 | `core/source_acl.py` | 48 | `core/sub_agents.py` | 338 |
-| `core/tool_agent.py` | 694 | `core/tracing.py` | 161 |
+| `core/tool_agent.py` | 694 | `core/tracing.py` | 172 |
+| `core/trace_mask.py` | 231 | | |
 | `db/__init__.py` | 1 | `db/enterprise_db.py` | 170 |
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
 | `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
@@ -2139,7 +2190,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/deadcode_allowlist.py` | 92 | `tests/fakes.py` | 102 |
 | `tests/test_biz_correctness.py` | 769 | `tests/test_chunk_keys.py` | 207 |
 | `tests/test_chunking_baseline.py` | 158 | `tests/test_config_contract.py` | 204 |
-| `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 422 |
+| `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 449 |
 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
 | `tests/test_fixes_assessment.py` | 252 | `tests/test_infra.py` | 224 |
 | `tests/test_memory_pipeline.py` | 197 | `tests/test_meta_align.py` | 132 |
@@ -2152,6 +2203,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_structure.py` | 203 | `tests/test_structure_chunking.py` | 178 |
 | `tests/test_tool_agent.py` | 720 | `tests/test_vector_store_backends.py` | 381 |
 | `tests/test_upload_rebuild_alignment.py` | 209 | | |
+| `tests/test_trace_mask.py` | 504 | | |
 | `scripts/baseline_snapshot.py` | 133 | `scripts/check_vector_db.py` | 307 |
 | `scripts/chunk_metrics.py` | 171 | `scripts/chunking_ab.py` | 326 |
 | `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
@@ -2177,7 +2229,7 @@ open http://127.0.0.1:8001/static/index.html
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **619 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+它对本文的 **627 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
 覆盖十三类写法：
 
 | # | 声明类型 | 例子 |
@@ -2188,8 +2240,8 @@ python scripts/verify_doc_linenos.py
 | 4 | 章节 / 全量小计（散文式） | `### 3.2 app/api/ — HTTP 接口层（1,492 行）` |
 | 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-744）` |
 | 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 231-240 |
-| 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:126-139` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（495 行）、`app/config.py`（765 行） |
+| 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:131-150` |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（497 行）、`app/config.py`（780 行） |
 | 9 | 区域行号表（裸区间） | `287-342` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:244-319` |
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
@@ -2199,7 +2251,7 @@ python scripts/verify_doc_linenos.py
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：619 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：627 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 

@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+from typing import Dict
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -218,6 +220,20 @@ def _looks_like_bearer_parsing(node) -> str:
     return ""
 
 
+#: 「非解析用途」的豁免 —— 逐条写明理由，且必须**真的被报出**才算数
+#: （`test_bearer_parsing_lives_in_exactly_one_module` 会反向校验僵尸豁免）。
+#: 为什么需要它：判据认的是**语法形态**（正则里含 bearer），而形态本身分不出
+#: "把凭证抽出来给鉴权用"与"把凭证替换成占位符"。前者是重复实现，后者不是。
+_BEARER_OTHER_PURPOSE: Dict[str, str] = {
+    "core/trace_mask.py": (
+        "脱敏用的替换规则，不是解析：它从不把 token 交给任何调用方，"
+        "只把 ``Bearer <token>`` 里的 token 换成占位符。"
+        "与 auth_header.py 的语义方向相反（一个是取出，一个是抹掉），"
+        "不构成同一语义的重复实现。"
+    ),
+}
+
+
 def test_bearer_parsing_lives_in_exactly_one_module():
     """Bearer 的**解析**只许出现在 ``app/utils/auth_header.py``。
 
@@ -230,6 +246,7 @@ def test_bearer_parsing_lives_in_exactly_one_module():
     root = Path(__file__).resolve().parents[1] / "app"
     owner = "utils/auth_header.py"
     offenders = []
+    seen_exempt = set()
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).as_posix()
         if rel == owner:
@@ -238,6 +255,9 @@ def test_bearer_parsing_lives_in_exactly_one_module():
         for node in ast.walk(tree):
             why = _looks_like_bearer_parsing(node)
             if why:
+                if rel in _BEARER_OTHER_PURPOSE:
+                    seen_exempt.add(rel)
+                    continue
                 offenders.append(f"{rel}:{node.lineno} {why}")
 
     # 兜底：本判据若哪天认不出东西，本用例会毫无意义地变绿 —— 那是"静默失效"，
@@ -250,6 +270,13 @@ def test_bearer_parsing_lives_in_exactly_one_module():
     ]:
         found = _looks_like_bearer_parsing(_ast.parse(probe).body[0].value)
         assert expect in found, f"判据认不出已知写法 {probe!r}（得到 {found!r}）—— 本用例已失效"
+
+    # 僵尸豁免反向校验：清单里的条目若不再被报出，说明它的理由已经过期
+    # （文件删了、规则改了），必须同步删掉 —— 与 tests/deadcode_allowlist.py 同一套语义。
+    assert seen_exempt == set(_BEARER_OTHER_PURPOSE), (
+        f"豁免清单与实际不符：未触发的 {sorted(set(_BEARER_OTHER_PURPOSE) - seen_exempt)}，"
+        f"未登记的 {sorted(seen_exempt - set(_BEARER_OTHER_PURPOSE))}"
+    )
 
     assert offenders == [], (
         "Bearer 解析在下面这些地方又出现了 —— 它只该有 app/utils/auth_header.py 一处：\n  "

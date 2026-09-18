@@ -19,7 +19,7 @@
 | 混合检索增强 | 向量 + 词面**独立**倒排索引（BM25）并发召回；lost-in-the-middle 片段重排；Embedding 缓存（查询 LRU+TTL、文档内容哈希持久化） |
 | Rerank 精排（可选） | cross-encoder 二次评分重排，真正提升「该进 Top-K 却排后」的片段，与 reorder 正交；默认关闭，未装 `sentence-transformers` 时自动降级为不精排 |
 | 请求级上下文 | 同请求内共享中间结果，避免重复计算与参数穿透（`app/core/request_ctx.py`）：query 向量复用、来源白名单、本轮证据。**授权事实与证据不由模型回传**——否则等于把"我能查谁的资料"交给模型决定 |
-| 可观测性 | 嵌套 span 树（对齐 OpenTelemetry 的 trace=span 树）+ 前端瀑布图 + `logs/trace.jsonl` 持久化；可选接入 LangSmith（`LANGSMITH_*` 环境变量，LangChain 自动 trace） |
+| 可观测性 | 嵌套 span 树（对齐 OpenTelemetry 的 trace=span 树）+ 前端瀑布图 + `logs/trace.jsonl` 持久化（**落盘前统一过一层脱敏**，见 `TRACE_MASK_*`）；可选接入 LangSmith（`LANGSMITH_*` 环境变量，LangChain 自动 trace） |
 | 工程化横切 | 统一异常基类、Prompt 注册表、trace_id 贯穿日志、入站限流（滑动窗口，默认 20 次/分/IP） |
 | 长短期记忆 | 参考 nanobot 设计（`app/memory/`）：短期滑动窗口 → 会话归档 → LLM/规则蒸馏为长期事实，支持人工审阅修正 |
 | 评估迭代 | 命中率 / MRR / 用户好评率可查询（`/evaluate/*`），反馈驱动调优闭环 |
@@ -27,7 +27,7 @@
 | 无登录态设计 | 服务端**没有登录态**：`user_id` 只用于隔离长期记忆，不参与任何鉴权，也没有工具会读它。工号只能来自用户原话或工具返回值——正常路径下由 `find_employee_by_name` 换取，模型不得编造。遇到「**我的**年假还剩几天」这类问法，正确行为是向用户索要姓名或工号 |
 | 多轮对话记忆 | 会话级上下文，自动裁剪最近 10 轮，24 小时自动过期 |
 | 可视化面板 | 全新设计系统（靛紫品牌色 / 侧边栏布局 / 移动端响应式）：智能对话（流式输出/引用溯源/场景徽章/反馈）/ 知识库管理 / 工作流引擎 / 记忆系统 / 评估迭代 / 服务自测六大模块 |
-| 全链路自测 | 启动执行本地轻量自检（9 项，不真实调用模型），深度检查（真实调用 LLM/Embedding）经 `/test/all` 手动触发；另提供 522 项 pytest 回归（含 80 项多 Agent 架构级用例） |
+| 全链路自测 | 启动执行本地轻量自检（9 项，不真实调用模型），深度检查（真实调用 LLM/Embedding）经 `/test/all` 手动触发；另提供 539 项 pytest 回归（含 80 项多 Agent 架构级用例） |
 
 ---
 
@@ -108,7 +108,7 @@ docker compose exec app python scripts/check_vector_db.py
 ### 运行测试
 
 ```bash
-# 主回归套件（522 项，纯 pytest，不需要起服务）
+# 主回归套件（539 项，纯 pytest，不需要起服务）
 pytest                                   # 全量
 pytest tests/test_multi_agent.py -q      # 只跑多 Agent 架构级用例（80 项）
 pytest -k tool_agent                     # 按名字筛选
@@ -414,6 +414,8 @@ langgraph-enterprise-bot/
 | `LANGSMITH_API_KEY` | 空 | LangSmith 平台密钥 |
 | `LANGSMITH_PROJECT` | langgraph-enterprise-bot | LangSmith 项目名 |
 | `LANGSMITH_ENDPOINT` | 空 | 自托管 LangSmith 地址，留空走官方 SaaS |
+| `TRACE_MASK_ENABLED` | true | `logs/trace.jsonl` 落盘前的脱敏总开关。关掉会打一条 WARNING（那是「原样落盘」的运行姿态） |
+| `TRACE_MASK_MAX_CHARS` | 64 | 单值原文保留上限，超出截为「前 N 字…<共 M 字>」；**设 0 = 只留长度、彻底不留正文** |
 
 ---
 
