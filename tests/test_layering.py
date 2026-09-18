@@ -24,6 +24,7 @@
 """
 from __future__ import annotations
 
+import ast
 import os
 import pathlib
 import subprocess
@@ -41,8 +42,10 @@ _EXPECTED_TOP_LEVEL = {
 
 #: 豁免条数的**上限**（棘轮）：只许减，不许增。
 #: 调高这个数字应当是一次有意识的决定，并且在 review 里说得清为什么。
-#: 当前 15 条的分组与理由见 `pyproject.toml` 的 `ignore_imports` 注释。
-_IGNORE_BUDGET = 15
+#: 当前 14 条的分组与理由见 `pyproject.toml` 的 `ignore_imports` 注释。
+#: （原为 15 条：`app.utils.embedding -> app.providers.embeddings` 随 P1-6
+#: 删掉兼容壳后消失 —— 这是**往下降**的唯一合法理由：真的还清了一条债。）
+_IGNORE_BUDGET = 14
 
 
 def _config() -> dict:
@@ -54,6 +57,13 @@ def _contract() -> dict:
     contracts = _config()["contracts"]
     assert len(contracts) >= 1, "import-linter 契约被删空了"
     return contracts[0]
+
+
+def _named_contract(name: str) -> dict:
+    for contract in _config()["contracts"]:
+        if contract.get("name") == name:
+            return contract
+    raise AssertionError(f"契约 {name!r} 不见了")
 
 
 def _run_lint_imports() -> subprocess.CompletedProcess:
@@ -184,3 +194,64 @@ def test_every_top_level_package_is_classified():
     actual = {p.name for p in (_REPO_ROOT / "app").iterdir() if p.is_dir()}
     ghosts = sorted(set(declared) - actual)
     assert ghosts == [], f"契约里还写着已经不存在的包：{ghosts}"
+
+
+# ---------------------------------------------------------------------------
+# 3. runtime_flags 的零依赖（P1-6 解环后的新增不变量）
+# ---------------------------------------------------------------------------
+_RUNTIME_FLAGS = _REPO_ROOT / "app" / "runtime_flags.py"
+
+
+def _app_imports(source: str) -> List[str]:
+    """返回源码里所有指向 `app` 的 import（AST 判据，不看字符串）。"""
+    found: List[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            found += [a.name for a in node.names
+                      if a.name == "app" or a.name.startswith("app.")]
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "app" or module.startswith("app."):
+                found.append(module)
+    return found
+
+
+def test_runtime_flags_has_no_app_imports():
+    """`app/runtime_flags.py` 不许 import 任何 `app.*` 的东西。
+
+    这个模块存在的**全部理由**就是「谁都能安全地 import 它」：它由 provider 单向
+    发布运行时事实、供配置层读取（见它的模块 docstring 与 P1-6）。它一旦开始
+    import `app.*`，就重新变成环的一部分 —— 而建它正是为了拆环。
+    """
+    assert _RUNTIME_FLAGS.exists(), "app/runtime_flags.py 被删了（P1-6 的载体）"
+    found = _app_imports(_RUNTIME_FLAGS.read_text(encoding="utf-8"))
+    assert found == [], f"runtime_flags 重新依赖了 app：{found}"
+
+
+def test_zero_dependency_contract_actually_fires():
+    """**自检**：往 `runtime_flags.py` 里塞一行 `from app import config`，契约必须变红。
+
+    为什么单独验这一条：`forbidden` 契约的 `forbidden_modules` 写错（例如只写
+    `"app"` 而不写 `"app.*"`）时，它会**一直通过**——而所有人都会以为
+    「零依赖」被守住了。这是本项目反复踩的「护栏恒真」坑，所以这里用探针
+    把「契约还有牙齿」变成可验证的事实。
+
+    ⚠️ 反向验证：把 `pyproject.toml` 里那条 forbidden 契约删掉，本用例必须变红。
+    """
+    assert _named_contract("runtime_flags 必须零依赖")["type"] == "forbidden"
+
+    original = _RUNTIME_FLAGS.read_text(encoding="utf-8")
+    _RUNTIME_FLAGS.write_text(
+        original + "\n\nfrom app import config  # noqa: F401  探针：本行由测试注入并还原\n",
+        encoding="utf-8",
+    )
+    try:
+        proc = _run_lint_imports()
+    finally:
+        _RUNTIME_FLAGS.write_text(original, encoding="utf-8")
+
+    assert proc.returncode != 0, (
+        "runtime_flags 里加了一行 `from app import config`，零依赖契约却没报错 —— "
+        "契约已失效（多半是 forbidden_modules 的写法没匹配上 `app.config`）"
+    )
+    assert "runtime_flags" in proc.stdout, proc.stdout[-1500:]

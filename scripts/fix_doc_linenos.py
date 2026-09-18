@@ -42,6 +42,9 @@ from verify_doc_linenos import DEFAULT_DOC, verify
 
 #: 「文档写 A-B，实际 1-C」——文件总行数（区间式）
 _P_TOTAL_RANGE = re.compile(r"^L(\d+): .*? 文档写 (\d+)-(\d+)，实际 1-(\d+)$")
+#: 「文档写第 X 行，AST 实为 [(C, D)]」——分区表里夹带的**单项**符号行号。
+#: 与 _P_SYMBOL 的差别：这里声明的是单个数字（"第 X 行"），不是区间。
+_P_BARE_SYMBOL = re.compile(r"^L(\d+): .*? 文档写第 (\d+) 行，AST 实为 \[\((\d+), \d+\)\]$")
 #: 「文档写 A-B，AST 实为 [(C, D)]」——符号行号（含松散单元格、模块标题）
 _P_SYMBOL = re.compile(r"^L(\d+): .*? 文档写 (\d+)-(\d+)，AST 实为 \[\((\d+), (\d+)\)\]$")
 #: 「文档写 X，实际 Y」——附录裸数字 / 通用文件行数
@@ -53,6 +56,12 @@ _P_PROSE = re.compile(
 )
 #: 区域表末段没收尾：「区域表止于 X，但 app/x.py 共 Y 行」
 _P_REGION_TAIL = re.compile(r"^L(\d+): 区域表止于 (\d+)，但 .*? 共 (\d+) 行")
+#: 配置分区表（第 13 类）：「配置分区表第 N 行写 A-B，但源码横幅对应的是 C-D」
+#: 加这一条之前，本脚本对这张 25 行的表**零覆盖** —— 而它是最容易整体错位的一张
+#: （`app/config.py` 任何增删都会让它全部下移），每次只能照着校验器的报错手工重写。
+_P_CONFIG_SECTION = re.compile(
+    r"^L(\d+): 配置分区表第 \d+ 行写 (\d+)-(\d+)，但源码横幅对应的是 (\d+)-(\d+)$"
+)
 
 
 def _fmt_like(raw: str, value: int) -> str:
@@ -71,6 +80,14 @@ def parse(message: str) -> tuple[int, str, str] | None:
         return int(m.group(1)), f"{m.group(2)}-{m.group(3)}", f"{m.group(4)}-{m.group(5)}"
 
     m = _P_SYMBOL.match(message)
+    if m:
+        return int(m.group(1)), f"{m.group(2)}-{m.group(3)}", f"{m.group(4)}-{m.group(5)}"
+
+    m = _P_BARE_SYMBOL.match(message)
+    if m:
+        return int(m.group(1)), m.group(2), m.group(3)
+
+    m = _P_CONFIG_SECTION.match(message)
     if m:
         return int(m.group(1)), f"{m.group(2)}-{m.group(3)}", f"{m.group(4)}-{m.group(5)}"
 

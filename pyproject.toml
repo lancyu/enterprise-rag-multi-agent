@@ -219,16 +219,24 @@ ignore_imports = [
     "app.core.self_check -> app.graph.workflow_graph",
     "app.core.self_check -> app.graph.state",
 
-    # ---- C 类（2 条）：基础层向上依赖，**这两条是真债务，不是接受** ----
-    # ① logger 需要 get_trace_id 才能给每行日志加 [trace=xxx] 前缀。
-    #    更干净的做法是把 trace_id 的存放处下沉到 utils（或独立的
-    #    app/runtime_flags 式零依赖模块），logger 只读那个 —— 与 P1-6
-    #    解 config 反向依赖是同一件事的另一半。
+    # ---- C 类（1 条）：基础层向上依赖，**这条是真债务，不是接受** ----
+    # logger 需要 get_trace_id 才能给每行日志加 [trace=xxx] 前缀。
+    # 更干净的做法是把 trace_id 的存放处下沉（或独立成 app/runtime_flags 式的
+    # 零依赖模块），logger 只读那个 —— 与 P1-6 解 config 反向依赖是同一件事的另一半。
+    #
+    # （原 C 类有 2 条。② `app.utils.embedding -> app.providers.embeddings` 已随
+    # P1-6 一并消失：那条边的载体 `app/utils/embedding.py` 是个纯 re-export 兼容壳，
+    # 删掉它、把两个调用方改指 `app.providers` 之后，这条边连同
+    # config → utils.embedding → providers.embeddings → config 的环一起没有了。）
     "app.utils.logger -> app.core.tracing",
-    # ② embedding 需要读 providers.embeddings 判断当前是"真实神经向量"还是
-    #    "本地哈希"，而 config 又要读 embedding → 形成
-    #    config → utils.embedding → providers.embeddings → config 的环。
-    #    这一条由 P1-6 处理（把"当前 embedding 模式"变成启动时注入的普通值）。
-    "app.utils.embedding -> app.providers.embeddings",
 ]
 unmatched_ignore_imports_alerting = "error"
+
+[[tool.importlinter.contracts]]
+name = "runtime_flags 必须零依赖"
+type = "forbidden"
+# `app/runtime_flags.py` 存在的全部意义就是「谁都能安全地 import 它」：它是
+# provider 向配置层单向发布运行时事实的通道。它一旦 import 任何 app.* 的东西，
+# 就重新变成环的一部分 —— 而 P1-6 正是为了拆掉那个环才建的这个模块。
+source_modules = ["app.runtime_flags"]
+forbidden_modules = ["app", "app.*"]

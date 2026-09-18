@@ -21,6 +21,7 @@ from collections import Counter
 from typing import List
 
 from app import config
+from app import runtime_flags
 from app.providers.base import Embedder
 from app.utils.logger import logger
 from app.utils.text import CJK_CHAR, CJK_RANGE
@@ -257,7 +258,7 @@ def get_embeddings() -> Embedder:
             _ = client.embed_query("健康检查")
             _embeddings_instance = CachedAPIEmbeddings(client)
             logger.info("Embedding 初始化成功：mode=api model=%s（已启用缓存）", config.EMBEDDING_MODEL_NAME)
-            return _embeddings_instance
+            return _publish(_embeddings_instance)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Embedding 接口不可用，自动降级为本地哈希向量：%s", exc)
 
@@ -269,13 +270,26 @@ def get_embeddings() -> Embedder:
         "Embedding 初始化完成：mode=local-hash dim=%d idf=%s",
         config.LOCAL_EMBEDDING_DIM, "已加载" if _embeddings_instance.has_idf() else "未训练",
     )
-    return _embeddings_instance
+    return _publish(_embeddings_instance)
+
+
+def _publish(instance: Embedder) -> Embedder:
+    """把「实际生效的模式」发布给配置层，然后原样返回实例。
+
+    这是 `app/runtime_flags` 的**唯一写入点** —— 只有这里知道 embedder
+    到底是 api 还是 local-hash（降级是初始化失败后才发生的，看配置看不出来）。
+    config 的自适应阈值只读那个值，不再反过来 import 本模块（原先形成环）。
+    """
+    runtime_flags.set_embedding_mode(instance.mode)
+    return instance
 
 
 def reset_embeddings() -> None:
     """重置单例（用于配置变更后的热切换）。"""
     global _embeddings_instance
     _embeddings_instance = None
+    # 同时清掉已发布的模式：重置之后「实际模式」确实又变成未知了。
+    runtime_flags.clear_embedding_mode()
 
 
 def get_embedding_mode() -> str:

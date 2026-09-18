@@ -22,6 +22,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app import config
 from app.db.vector_db import get_vector_store
+from app.providers.embeddings import get_embeddings
 from app.rag import parent_store
 from app.rag.lexical import chunk_key, get_lexical_index
 from app.rag.prepare import prepare_documents, prepare_single, quality_report
@@ -31,7 +32,6 @@ from app.rag.structure import (
     split_by_section,
 )
 from app.utils.doc_loader import load_all_documents
-from app.utils.embedding import get_embeddings
 from app.utils.logger import logger
 
 # 短于该长度的片段视为碎片，尝试向上一片段合并

@@ -8,6 +8,8 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
+from app import runtime_flags
+
 load_dotenv()
 
 
@@ -249,22 +251,33 @@ ROUTE_SEMANTIC_MARGIN: Optional[float] = (
 )
 
 
+def _observed_embedding_mode() -> str:
+    """**当前实际生效**的 embedding 模式；尚未初始化时按 ``"api"`` 处理。
+
+    值由 `app/providers/embeddings.py` 在真正建好 embedder 之后注入
+    （见 `app/runtime_flags` 的模块 docstring）。
+
+    ⚠️ **本模块刻意不 import 任何业务层模块**。此前这几处自适应默认值直接
+    import `app.utils.embedding.get_embedding_mode`，形成
+    ``config → utils.embedding → providers.embeddings → config`` 的环：
+    任何想单独 import config 的地方都会被拖进整条 provider 初始化链
+    （含一次真实的 embedding 健康检查请求）。配置中心应当是叶子，不是入口。
+    """
+    return runtime_flags.observed_embedding_mode() or "api"
+
+
 def effective_route_semantic_floor() -> float:
     """语义地板的实际取值：显式配置优先，否则按 embedding 模式自适应。"""
     if ROUTE_SEMANTIC_FLOOR is not None:
         return ROUTE_SEMANTIC_FLOOR
-    from app.utils.embedding import get_embedding_mode
-
-    return 0.30 if get_embedding_mode() == "local-hash" else 0.35
+    return 0.30 if _observed_embedding_mode() == "local-hash" else 0.35
 
 
 def effective_route_semantic_margin() -> float:
     """语义边际的实际取值：显式配置优先，否则按 embedding 模式自适应。"""
     if ROUTE_SEMANTIC_MARGIN is not None:
         return ROUTE_SEMANTIC_MARGIN
-    from app.utils.embedding import get_embedding_mode
-
-    return 0.02 if get_embedding_mode() == "local-hash" else 0.03
+    return 0.02 if _observed_embedding_mode() == "local-hash" else 0.03
 
 
 # ============================================================
@@ -385,18 +398,14 @@ def effective_score_threshold() -> Optional[float]:
     """
     if SCORE_THRESHOLD is not None:
         return SCORE_THRESHOLD
-    from app.utils.embedding import get_embedding_mode
-
-    return 0.08 if get_embedding_mode() == "local-hash" else None
+    return 0.08 if _observed_embedding_mode() == "local-hash" else None
 
 
 def effective_fallback_min() -> float:
     """软回退门槛：显式配置优先，否则跟随实际 embedding 模式自适应。"""
     if FALLBACK_MIN_SCORE is not None:
         return FALLBACK_MIN_SCORE
-    from app.utils.embedding import get_embedding_mode
-
-    return 0.05 if get_embedding_mode() == "local-hash" else 0.04
+    return 0.05 if _observed_embedding_mode() == "local-hash" else 0.04
 
 # ============================================================
 # 融合权重与阈值（P1-1：此前是「伪配置」，已补齐为真实配置）

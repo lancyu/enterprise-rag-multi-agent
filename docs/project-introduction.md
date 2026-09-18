@@ -45,7 +45,7 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **16526 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **16595 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | **9 个节点 + 3 条条件边** |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
@@ -75,7 +75,7 @@
 │                  app/utils/          加载 / 缓存 / 校验 / 日志  │
 └─────────────────────────────────────────────────────────────┘
                           ▲
-                          │ 全局配置：app/config.py（780 行）
+                          │ 全局配置：app/config.py（789 行）
                           │ 贯穿所有层：app/core/tracing.py（全链路 span 树）
 ```
 
@@ -190,7 +190,8 @@
 |---|---|---|
 | `app/__init__.py` | 1 | 包声明 |
 | `app/main.py` | **1-240** | 应用装配：lifespan、中间件、路由注册、全局异常 |
-| `app/config.py` | **1-780** | 全局配置中心（所有环境变量集中于此） |
+| `app/config.py` | **1-789** | 全局配置中心（所有环境变量集中于此） |
+| `app/runtime_flags.py` | **1-66** | **零依赖**运行时标志位：provider → config 的**单向**事实通道（见 §4.1 末尾） |
 
 ### 3.2 `app/api/` — HTTP 接口层（1537 行）
 
@@ -273,14 +274,14 @@
 | `evaluator.py` | **1-384** | L5 | 命中率 / MRR / 忠实度 / 反馈 |
 | `__init__.py` | **1-68** | — | 统一出口（纯 re-export） |
 
-### 3.6 `app/providers/` — 模型能力层（780 行）
+### 3.6 `app/providers/` — 模型能力层（796 行）
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
 | `llm.py` | **1-285** | 大模型工厂 + 限流退避 + 流式策略 |
-| `embeddings.py` | **1-291** | 向量化：本地哈希 / 远程 API / 带缓存代理 |
+| `embeddings.py` | **1-305** | 向量化：本地哈希 / 远程 API / 带缓存代理 |
 | `rerank.py` | **1-102** | cross-encoder 精排（默认关） |
-| `__init__.py` | **1-53** | 统一出口 |
+| `__init__.py` | **1-55** | 统一出口 |
 | `base.py` | **1-49** | `Embedder` / `Reranker` 抽象接口 |
 
 ### 3.7 `app/db/` — 存储层（1004 行）
@@ -312,7 +313,6 @@
 | `utils/validator.py` | **1-162** | 入参校验与注入过滤（Pydantic v2） |
 | `utils/cache.py` | **1-120** | 查询向量 LRU+TTL / 文档向量批量落盘 |
 | `utils/logger.py` | **1-74** | 日志：控制台 + 滚动文件 + trace_id 注入 |
-| `utils/embedding.py` | **1-22** | 兼容壳 |
 | `tools/sqlite_tools.py` | **1-255** | **3 个只读工具**（`@tool` + 显式 `args_schema`），JSON Schema 见 [`tool-json-schema.md`](tool-json-schema.md) |
 
 > 旧的 `tools/rule_tool.py` / `ticket_tool.py` / `user_tool.py`（自造关键字匹配，
@@ -361,41 +361,41 @@
 `AUTH_EXEMPT_PATHS` 里的 Dify 接口有自己的 Key 校验，所以两条鉴权链**不能互相替代**。
 CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"本地能跑、上线跨域全挂"，代码里已自动关闭凭据。
 
-#### 📍 `app/config.py`（1-780）
+#### 📍 `app/config.py`（1-789）
 
 配置分区（按行号）：
 
 | 行号范围 | 分区 |
 |---|---|
-| 1-57 | 模块 docstring、依赖导入与解析辅助（`_env` 14-22 / `_env_bool` 25-45 / `_env_list` 48-55） |
-| 58-65 | 项目路径 |
-| 66-114 | 大模型配置（OpenAI 兼容协议；含思考开关、超时与输出上限） |
-| 115-142 | **Agent（function calling）配置** —— 工具决策最多几轮 `TOOL_AGENT_MAX_STEPS` 141 |
-| 143-157 | **复杂 RAG Agent 配置** —— 子问题上限 `COMPLEX_RAG_MAX_SUBQUERIES` 149 与合并片段上限 `COMPLEX_RAG_MAX_DOCS` 155 |
-| 158-269 | **混合意图路由（四层漏斗）** —— `ROUTE_BUDGET_MS` 195（**总耗时硬上界**）、`ROUTE_LEXICAL_FLOOR` 225 / `ROUTE_LEXICAL_MARGIN` 237、`effective_route_semantic_floor` 252-258 / `effective_route_semantic_margin` 261-267 |
-| 270-281 | **业务结构化数据库（SQLite，只读）** —— `SQLITE_DB_PATH` 279（员工 / 假期余额两张表，供 3 个只读工具查询） |
-| 282-297 | Embedding 配置（含查询侧指令前缀 `EMBEDDING_QUERY_PREFIX` 292） |
-| 298-353 | 向量数据库配置（`VECTOR_DB_CHOICES` 302、`VECTOR_DB_TYPE` 307、`MILVUS_URI` 319、`effective_vector_collection` 329-336、`validate_vector_db_type` 339-351） |
-| 354-362 | Redis 配置 |
-| 363-400 | 对话与检索参数（`effective_score_threshold` 381-390、`effective_fallback_min` 393-399） |
-| 401-425 | 融合权重与阈值 |
-| 426-432 | 词面倒排索引配置（BM25） |
-| 433-444 | Rerank 精排 |
-| 445-465 | 可观测性接入（LangSmith 445-455 + **trace 脱敏** 457-465） |
-| 466-471 | Embedding 缓存配置 |
-| 472-476 | 入站限流配置 |
-| 477-508 | 记忆系统配置（短期记忆 + 长期记忆） |
-| 509-515 | 切片策略（基础：分片大小 + 重叠） |
-| 516-595 | 切片策略（配置化 + 策略可替换） |
-| 596-616 | PDF 图片抽取 |
-| 617-654 | Dify 兼容接口 |
-| 655-676 | 入站鉴权（fail-closed） |
-| 677-707 | 来源访问控制 ACL（`_parse_source_acl` 690-703） |
-| 708-780 | 服务配置 + `mask_secret` 716-722 + `dump_config` 725-780 |
+| 1-59 | 模块 docstring、依赖导入与解析辅助（`_env` 16-24 / `_env_bool` 27-47 / `_env_list` 50-57） |
+| 60-67 | 项目路径 |
+| 68-116 | 大模型配置（OpenAI 兼容协议；含思考开关、超时与输出上限） |
+| 117-144 | **Agent（function calling）配置** —— 工具决策最多几轮 `TOOL_AGENT_MAX_STEPS` 143 |
+| 145-159 | **复杂 RAG Agent 配置** —— 子问题上限 `COMPLEX_RAG_MAX_SUBQUERIES` 151 与合并片段上限 `COMPLEX_RAG_MAX_DOCS` 157 |
+| 160-282 | **混合意图路由（四层漏斗）** —— `ROUTE_BUDGET_MS` 197（**总耗时硬上界**）、`ROUTE_LEXICAL_FLOOR` 227 / `ROUTE_LEXICAL_MARGIN` 239、`effective_route_semantic_floor` 269-273 / `effective_route_semantic_margin` 276-280 |
+| 283-294 | **业务结构化数据库（SQLite，只读）** —— `SQLITE_DB_PATH` 292（员工 / 假期余额两张表，供 3 个只读工具查询） |
+| 295-310 | Embedding 配置（含查询侧指令前缀 `EMBEDDING_QUERY_PREFIX` 305） |
+| 311-366 | 向量数据库配置（`VECTOR_DB_CHOICES` 315、`VECTOR_DB_TYPE` 320、`MILVUS_URI` 332、`effective_vector_collection` 342-349、`validate_vector_db_type` 352-364） |
+| 367-375 | Redis 配置 |
+| 376-409 | 对话与检索参数（`effective_score_threshold` 394-401、`effective_fallback_min` 404-408） |
+| 410-434 | 融合权重与阈值 |
+| 435-441 | 词面倒排索引配置（BM25） |
+| 442-453 | Rerank 精排 |
+| 454-474 | 可观测性接入（LangSmith 445-455 + **trace 脱敏** 457-465） |
+| 475-480 | Embedding 缓存配置 |
+| 481-485 | 入站限流配置 |
+| 486-517 | 记忆系统配置（短期记忆 + 长期记忆） |
+| 518-524 | 切片策略（基础：分片大小 + 重叠） |
+| 525-604 | 切片策略（配置化 + 策略可替换） |
+| 605-625 | PDF 图片抽取 |
+| 626-663 | Dify 兼容接口 |
+| 664-685 | 入站鉴权（fail-closed） |
+| 686-716 | 来源访问控制 ACL（`_parse_source_acl` 699-712） |
+| 717-789 | 服务配置 + `mask_secret` 725-731 + `dump_config` 734-789 |
 
 > ⚠️ **这张表是"整表错位"的高危区。**它以前只被校验器保护了一半，现在两半都保护了。
 >
-> **符号数字**（`TOOL_AGENT_MAX_STEPS` 141 这类）：校验器第 11 类逐条比对 AST。
+> **符号数字**（`TOOL_AGENT_MAX_STEPS` 143 这类）：校验器第 11 类逐条比对 AST。
 >
 > **24 个分区区间 + 表首那行前置段**：校验器第 13 类逐行对齐源码的 `# ====` 横幅，
 > 口径就是下面这两句——**起 = 横幅首行，止 = 下一横幅首行 − 1**（末段止 = 文件末行）。
@@ -426,7 +426,7 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 - `_env_bool`：统一认定 `0/false/no/off` 是假，避免每个模块各写一套判断。
 - `_env_list`：逗号切分并丢弃空项。
 
-`effective_score_threshold`（`config.py:381-390`）是个有意思的设计：
+`effective_score_threshold`（`config.py:394-401`）是个有意思的设计：
 检索阈值**按 embedding 模式自适应**。为什么？因为不同向量模型的分数尺度天差地别——
 OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 如果套一个固定阈值，换个模型检索就全空了。
@@ -439,8 +439,8 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 `SCORE_THRESHOLD` 用 `Optional`，`None` 有「未配置」的语义，**不能用 0 代替**——
 留空表示"按 embedding 模式自动选"，写 0 则表示"任何分数都不够"，两者天差地别。
 历史坑：有一批融合权重只在消费方用 `getattr(config, X, 默认值)` 读取，config 里根本没定义，
-导致改 `.env` 完全无效——现已在 config 里补齐为真实配置（`RRF_K:409` / `DENSE_WEIGHT:410` /
-`LEXICAL_WEIGHT:411` 这一组就是），并把消费方从 `getattr` 兜底改成**运行时读取**。
+导致改 `.env` 完全无效——现已在 config 里补齐为真实配置（`RRF_K:418` / `DENSE_WEIGHT:419` /
+`LEXICAL_WEIGHT:420` 这一组就是），并把消费方从 `getattr` 兜底改成**运行时读取**。
 
 ---
 
@@ -1413,16 +1413,16 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 **流式四级策略**（`_stream` 232-271）：
 正常逐块透传 → 未产出内容前失败可回退整段生成 → 超时不回退 → 已产出部分再失败直接抛（避免内容重复）。
 
-#### 📍 `app/providers/embeddings.py`（1-291）—— 向量化
+#### 📍 `app/providers/embeddings.py`（1-305）—— 向量化
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `LocalHashEmbeddings` | 61-146 | **本地哈希向量**（无 Key 也能跑） |
-| ├ `fit` / `_load_idf` | 111-120 / 72-81 | IDF 训练与加载 |
-| └ `_embed` | 126-140 | 核心向量化 |
-| `APIEmbeddings` | 149-188 | 远程 API |
-| `CachedAPIEmbeddings` | 191-237 | 带缓存的代理 |
-| `get_embeddings` | 243-272 | 工厂（自动降级） |
+| `LocalHashEmbeddings` | 62-147 | **本地哈希向量**（无 Key 也能跑） |
+| ├ `fit` / `_load_idf` | 112-121 / 72-81 | IDF 训练与加载 |
+| └ `_embed` | 127-141 | 核心向量化 |
+| `APIEmbeddings` | 150-189 | 远程 API |
+| `CachedAPIEmbeddings` | 192-238 | 带缓存的代理 |
+| `get_embeddings` | 244-273 | 工厂（自动降级） |
 
 **LocalHashEmbeddings 的原理（小白版）**：
 
@@ -1447,7 +1447,7 @@ IDF 表在全量建索引时训练一次并持久化，查询时复用同一套�
 只够支撑"字面/近义短语重叠"型的企业制度检索。
 它的价值是**保证无 Key 时全链路能跑通**（CI、离线演示）。
 
-**切换机制**（`get_embeddings` 243-272）：
+**切换机制**（`get_embeddings` 244-273）：
 先尝试真实接口并做一次健康检查，失败就自动落到本地哈希并打印 `mode=local-hash`。
 注意 `get_embedding_mode()` 返回的是**实际初始化成功**的模式，不是配置值——
 这样运维能一眼看出当前真正在用哪个。
@@ -2157,7 +2157,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（16526 行）**
+**应用代码 `app/`（16595 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -2166,7 +2166,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `api/evaluation.py` | 81 | `api/knowledge.py` | 182 |
 | `api/memory.py` | 134 | `api/routing.py` | 110 |
 | `api/test.py` | 33 | `api/workflow.py` | 152 |
-| `config.py` | 780 | `core/__init__.py` | 1 |
+| `config.py` | 789 | `core/__init__.py` | 1 |
 | `core/errors.py` | 72 | `core/llm_factory.py` | 23 |
 | `core/observability.py` | 39 | `core/prompts.py` | 240 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 64 |
@@ -2188,8 +2188,8 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `memory/__init__.py` | 185 | `memory/chat_history.py` | 70 |
 | `memory/consolidator.py` | 154 | `memory/dream.py` | 148 |
 | `memory/long_term.py` | 178 | `memory/short_term.py` | 179 |
-| `memory/store.py` | 331 | `providers/__init__.py` | 53 |
-| `providers/base.py` | 49 | `providers/embeddings.py` | 291 |
+| `memory/store.py` | 331 | `providers/__init__.py` | 55 |
+| `providers/base.py` | 49 | `providers/embeddings.py` | 305 |
 | `providers/llm.py` | 285 | `providers/rerank.py` | 102 |
 | `rag/__init__.py` | 68 | `rag/evaluator.py` | 384 |
 | `rag/generator.py` | 403 | `rag/indexer.py` | 595 |
@@ -2199,16 +2199,16 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `rag/structure.py` | 334 | `static/gen_favicon.py` | 148 |
 | `tools/__init__.py` | 1 | `tools/sqlite_tools.py` | 255 |
 | `utils/__init__.py` | 1 | `utils/cache.py` | 120 |
-| `utils/doc_loader.py` | 341 | `utils/embedding.py` | 22 |
+| `utils/doc_loader.py` | 341 | `runtime_flags.py` | 66 |
 | `utils/logger.py` | 74 | `utils/validator.py` | 162 |
 | `tests/__init__.py` | 1 | `tests/conftest.py` | 85 |
 | `tests/deadcode_allowlist.py` | 92 | `tests/fakes.py` | 102 |
 | `tests/test_biz_correctness.py` | 769 | `tests/test_chunk_keys.py` | 207 |
 | `tests/test_chunking_baseline.py` | 158 | `tests/test_config_contract.py` | 204 |
 | `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 449 |
-| `tests/test_doc_linenos.py` | 361 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
+| `tests/test_doc_linenos.py` | 364 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
 | `tests/test_fixes_assessment.py` | 252 | `tests/test_infra.py` | 224 |
-| `tests/test_layering.py` | 186 | `tests/test_memory_pipeline.py` | 197 |
+| `tests/test_layering.py` | 257 | `tests/test_memory_pipeline.py` | 197 |
 | `tests/test_meta_align.py` | 132 | `tests/test_multi_agent.py` | 953 |
 | `tests/test_parent_chunk.py` | 112 | `tests/test_pdf_image.py` | 97 |
 | `tests/test_rag.py` | 204 | `tests/test_routing_funnel.py` | 1413 |
@@ -2222,7 +2222,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `scripts/baseline_snapshot.py` | 133 | `scripts/check_vector_db.py` | 307 |
 | `scripts/chunk_metrics.py` | 171 | `scripts/chunking_ab.py` | 326 |
 | `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
-| `scripts/fix_doc_linenos.py` | 183 | `scripts/module_inventory.py` | 83 |
+| `scripts/fix_doc_linenos.py` | 200 | `scripts/module_inventory.py` | 83 |
 | `scripts/probe_routing.py` | 214 | `scripts/refgraph_scan.py` | 607 |
 | `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 857 |
 | `scripts/verify_milvus_lite.py` | 123 | | |
@@ -2256,11 +2256,11 @@ python scripts/verify_doc_linenos.py
 | 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-744）` |
 | 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 231-240 |
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:131-150` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（497 行）、`app/config.py`（780 行） |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（497 行）、`app/config.py`（789 行） |
 | 9 | 区域行号表（裸区间） | `287-342` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:244-319` |
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
-| 12 | **区间式引用**（符号 + 括号 / 裸文件名 + 冒号 / 表格行首文件名 + 描述里匿名区间） | `state.py`：`GraphState`（50-126）、`config.py:381-390` |
+| 12 | **区间式引用**（符号 + 括号 / 裸文件名 + 冒号 / 表格行首文件名 + 描述里匿名区间） | `state.py`：`GraphState`（50-126）、`config.py:394-401` |
 | 13 | **config 分区表**（真值来自源码 `# ====` 横幅，**不在 AST 里**） | `47-54` 项目路径、`678-744` 服务配置 |
 | 14 | **文档点名的符号必须真实存在**（**唯一不看数字的一类**） | `error_route_edge`、`tool_node` |
 
@@ -2299,7 +2299,7 @@ python scripts/verify_doc_linenos.py
 > **第 12 类把这条教训又推进了一步**：同一批「没人校验」的写法，
 > 常常是被**同一个前提**一次性漏掉的。第 11 类修的是「符号与数字之间
 > **没有**括号」这一种邻接方式，于是同族的另几种邻接——**带**括号
-> （如 `state.py`：`GraphState`（50-126））、带冒号（如 `config.py:381-390`）、
+> （如 `state.py`：`GraphState`（50-126））、带冒号（如 `config.py:394-401`）、
 > 以及表格里的「行首文件名 + 描述中匿名区间」——就一并漏在外面。
 > 补上后声明数 558 → 594，抓出 5 处错值，其中 `GraphState` 那一处
 > **整整偏了 40 行**，却既不越界、也不报错——是第 10 类那种

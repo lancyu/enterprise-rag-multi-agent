@@ -282,7 +282,9 @@ def test_class8_generic_file_line_count_drift_is_reported(problems):
 
 def test_class9_region_table_out_of_range_is_reported(problems):
     """第 9 类：区域行号表（裸区间）。改到界外必须报出来。"""
-    _assert_reported(problems(_bump("| 1-57 | 模块 docstring", 0, delta=-1)), "越界")
+    # ⚠️ 锚点刻意**不含数字**：这张表的左列会随 app/config.py 的增删整体错位，
+    # 把 "1-59" 写进锚点就等于让它每隔几周失效一次。数字由 `_bump` 的 nth 定位。
+    _assert_reported(problems(_bump("模块 docstring、依赖导入与解析辅助", 0, delta=-1)), "越界")
 
 
 def test_class11_context_inherited_symbol_drift_is_reported(problems):
@@ -297,7 +299,8 @@ def test_class12_parenthesised_range_drift_is_reported(problems):
 
 def test_class13_config_partition_drift_is_reported(problems):
     """第 13 类：`app/config.py` 的「配置分区（按行号）」表。"""
-    _assert_reported(problems(_bump("| 58-65 | 项目路径 |", 1)), "配置分区表第")
+    # 同上：锚点不含数字，避免 config.py 一变就被当成"载体变了"。
+    _assert_reported(problems(_bump("项目路径 |", 1)), "配置分区表第")
 
 
 def test_class13_reports_when_its_own_marker_disappears(problems):

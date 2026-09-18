@@ -11,8 +11,10 @@
 
     from app.providers import get_embeddings, get_chat_model, rerank_docs
 
-历史原因，`app/utils/embedding.py`、`app/core/llm_factory.py`、`app/rag/rerank.py`
-仍保留为向后兼容的薄封装（re-export 本包同名符号），新旧 import 路径完全等价。
+历史原因，`app/core/llm_factory.py`、`app/rag/rerank.py` 仍保留为向后兼容的薄封装
+（re-export 本包同名符号）。`app/utils/embedding.py` **已删除**（P1-6 解环时一并处理：
+它的唯一存在理由是让 `app/utils` 这一最底层去 import `app/providers`，而配置层为了读
+「当前 embedding 模式」又得经过它，形成环）。
 """
 from app.providers.base import Embedder, Reranker
 from app.providers.embeddings import (

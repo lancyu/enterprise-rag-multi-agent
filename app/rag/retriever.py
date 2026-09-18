@@ -27,9 +27,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from app import config
 from app.core.request_ctx import get_query_vector, set_query_vector
 from app.db.vector_db import get_vector_store
+from app.providers.embeddings import get_embeddings
 from app.rag.lexical import chunk_key, get_lexical_index
 from app.utils.doc_loader import file_name
-from app.utils.embedding import get_embeddings
 from app.utils.logger import logger, preview
 from app.utils.text import CJK_CHAR, CJK_STOP, cjk_runs
 
