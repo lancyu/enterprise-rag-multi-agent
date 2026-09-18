@@ -4,6 +4,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.errors import public_detail
 from app.core.tracing import begin_trace, end_trace, span
 from app.graph.state import create_initial_state
 from app.graph.workflow_graph import enterprise_workflow, get_mermaid
@@ -136,11 +137,16 @@ async def workflow_execute(req: WorkflowExecuteRequest) -> dict:
             "tool_result": result.get("tool_result"),
             "sources_count": len(result.get("retrieve_docs", [])),
             "need_human": result.get("need_human", False),
-            "error_msg": result.get("error_msg"),
+            # ``error_msg`` 是图内部的**诊断串**（可含异常原文，见 graph/nodes.py），
+            # 不原样外发：它此前直接把 ``str(exc)`` 送到了客户端，而同一个故障在
+            # /chat/ask 上只给 trace_id —— 两条链路两种口径（P0-2）。
+            # 这里保留字段名与"有无错误"的语义，只把原文换成通用文案。
+            "has_error": bool(result.get("error_msg")),
+            "error_msg": public_detail("本轮遇到致命错误，请查看服务日志") if result.get("error_msg") else None,
             "trace": trace,
             "span_tree": result.get("span_tree", []),
             "elapsed_ms": int((time.perf_counter() - start) * 1000),
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("工作流执行异常")
-        raise HTTPException(status_code=500, detail=f"工作流执行失败：{exc}")
+        raise HTTPException(status_code=500, detail=public_detail("工作流执行失败"))

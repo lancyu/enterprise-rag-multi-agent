@@ -31,6 +31,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app import config
+from app.core.errors import public_detail
 from app.db.vector_db import get_vector_store
 from app.rag import retriever
 from app.utils.auth_header import api_key_matches, bearer_token
@@ -228,9 +229,11 @@ async def _do_retrieval(req: RetrievalRequest, authorization: Optional[str]) -> 
     try:
         # 多召回一些再按归一化分过滤，避免阈值过滤后凑不满 top_k
         hits = retriever.retrieve(query, top_k=max(top_k * 2, 10))
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("Dify 检索失败：query=%s", preview(query, 50))
-        return _err(ERR_INTERNAL, f"检索失败：{exc}", status=500)
+        # 对外文案由 public_detail 唯一构造：Dify 的错误详情会进它的运行日志，
+        # 回显本项目的异常原文等于把内部细节转发到另一个系统。
+        return _err(ERR_INTERNAL, public_detail("检索失败"), status=500)
 
     records: List[Dict[str, Any]] = []
     for hit in hits:

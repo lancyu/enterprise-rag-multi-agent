@@ -10,10 +10,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app import config
 from app.api import chat, dify, evaluation, knowledge, memory, routing, test, workflow
-from app.core.errors import RateLimitExceeded
+from app.core.errors import RateLimitExceeded, trace_ref
 from app.core.rate_limit import check_rate_limit
 from app.core.self_check import get_health, run_self_check
-from app.core.tracing import get_trace_id, new_trace_id, set_trace_id
+from app.core.tracing import new_trace_id, set_trace_id
 from app.db.redis_db import close_redis, get_redis
 from app.utils.auth_header import api_key_matches, bearer_token
 from app.utils.logger import logger
@@ -232,6 +232,9 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={
             "code": 500,
             "message": "服务内部异常，请稍后重试",
-            "trace_id": get_trace_id() or "-",
+            # 与 /chat/ask、/chat/ask/stream 共用同一个凭证取值处
+            # （app/core/errors.py）。这里多了一层结构：message 与 trace_id
+            # 分列两个字段，而 HTTPException 的 detail 是拼成一句话。
+            "trace_id": trace_ref(),
         },
     )

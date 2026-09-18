@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app import config
+from app.core.errors import public_detail
 from app.memory import get_long_term_memory, get_memory_stats, run_dream
 from app.memory.store import MemoryStore
 from app.utils.logger import logger
@@ -108,9 +109,9 @@ def memory_dream(user_id: str, batch_size: Optional[int] = None) -> dict:
     try:
         result = run_dream(user_id, batch_size=batch_size)
         return {"code": 0, "message": "蒸馏完成", **result}
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("记忆蒸馏失败")
-        raise HTTPException(status_code=500, detail=f"蒸馏失败：{exc}")
+        raise HTTPException(status_code=500, detail=public_detail("蒸馏失败"))
 
 
 @router.post("/{user_id}/facts")

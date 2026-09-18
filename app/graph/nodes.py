@@ -403,7 +403,10 @@ def tool_node(state: GraphState) -> GraphState:
             new_state["error_msg"] = decision.error
             new_state["need_human"] = True
             new_state["trace"] = _trace(
-                new_state, "tool", f"决策失败：{decision.error[:60]}", _elapsed_ms(start)
+                # detail 会随响应体下发（前端面板直接显示），故只写**事实**。
+                # 诊断串（decision.error）只进上一行的日志 —— 它可能含路径与
+                # 内网地址，而"转人工"这件事用户在答案里本来就看得见。
+                new_state, "tool", "决策失败，转人工兜底", _elapsed_ms(start)
             )
             return new_state
 
@@ -554,13 +557,17 @@ def generate_answer_node(state: GraphState) -> GraphState:
 def human_fallback_node(state: GraphState) -> GraphState:
     new_state = dict(state)
     # 不对用户回显异常原文：它可能含文件路径、堆栈、内网地址等内部细节。
-    # 异常详情留在 trace 与日志供运维排查，用户只看到可行动的提示。
+    # 异常详情只进日志，用户只看到可行动的提示。
     new_state["answer"] = (
         "当前问题暂时无法自动处理，已为您转接人工客服。\n"
         "您也可以稍后重试，或联系行政 / IT 服务台获取帮助。"
     )
     new_state["need_human"] = True
     new_state["intent_source"] = "human_fallback"
-    new_state["trace"] = _trace(new_state, "human_fallback", state.get("error_msg", "")[:60], 0)
+    # detail 会随响应体下发（前端面板直接显示），所以这里**不能**放 error_msg：
+    # 它是内部诊断串（可含异常原文），此前被截前 60 字塞进 trace，等于给
+    # "不回显异常"开了一条侧路 —— 用户看不到答案里的原文，却能在 trace 里看到。
+    # 步骤名已经能说明是哪一段失败的（前一条 trace 就是它）。
+    new_state["trace"] = _trace(new_state, "human_fallback", "已转人工兜底", 0)
     logger.warning("触发人工兜底：%s", state.get("error_msg"))
     return new_state

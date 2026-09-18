@@ -26,9 +26,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import iterate_in_threadpool
 
+from app.core.errors import public_detail
 from app.core.llm_factory import get_llm_mode
 from app.core.source_acl import resolve_allowed_sources
-from app.core.tracing import begin_trace, end_trace, get_trace_id, span
+from app.core.tracing import begin_trace, end_trace, span
 from app.graph.nodes import build_generation_inputs
 from app.graph.state import create_initial_state
 from app.graph.workflow_graph import enterprise_workflow, pre_generation_workflow
@@ -218,11 +219,11 @@ async def chat_ask(req: ChatRequest) -> dict:
         end_trace()
         logger.exception("对话接口异常")
         # 不回显异常原文：它可能含文件路径、内网地址、依赖版本等内部细节。
-        # 改为下发 trace_id —— 用户报障时提供它即可在 logs/trace.jsonl 中精确定位，
-        # 既保留可追溯性，又不泄露任何内部信息。
+        # 对外文案由 public_detail 唯一构造（固定前缀 + trace_id）—— 用户报障时
+        # 提供它即可在 logs/ 中精确定位，既保留可追溯性，又不泄露任何内部信息。
         raise HTTPException(
             status_code=500,
-            detail=f"对话服务异常，请稍后重试（trace_id: {get_trace_id() or '-'}）",
+            detail=public_detail("对话服务异常，请稍后重试"),
         )
 
     span_tree = end_trace()
@@ -386,10 +387,13 @@ async def chat_ask_stream(req: ChatRequest) -> StreamingResponse:
         except asyncio.CancelledError:
             end_trace()
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             end_trace()
             logger.exception("流式对话异常")
-            yield sse("error", {"detail": f"对话服务异常：{exc}"})
+            # 与非流式链路同一个构造。这里此前是 `f"对话服务异常：{exc}"` ——
+            # 同一次故障，SSE 把文件路径/供应商返回体送到了浏览器，非流式却只给
+            # trace_id。两条链路各写一遍文案，分歧就必然出现（P0-2 的原始证据）。
+            yield sse("error", {"detail": public_detail("对话服务异常，请稍后重试")})
             return
 
         span_tree = end_trace()

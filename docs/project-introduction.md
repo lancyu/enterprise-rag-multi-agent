@@ -45,11 +45,11 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **16153 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **16222 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | 8 个 + 2 个条件分支 |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
-| 测试 | 30 个文件（26 个 `test_*.py`），`pytest` **466 项全绿** |
+| 测试 | 32 个文件（28 个 `test_*.py`），`pytest` **514 项全绿** |
 | 内置语料 | 12 个文档，切分后 **176 个片段** |
 
 ---
@@ -187,19 +187,19 @@
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
 | `app/__init__.py` | 1 | 包声明 |
-| `app/main.py` | **1-237** | 应用装配：lifespan、中间件、路由注册、全局异常 |
+| `app/main.py` | **1-240** | 应用装配：lifespan、中间件、路由注册、全局异常 |
 | `app/config.py` | **1-765** | 全局配置中心（所有环境变量集中于此） |
 
-### 3.2 `app/api/` — HTTP 接口层（1518 行）
+### 3.2 `app/api/` — HTTP 接口层（1533 行）
 
 | 文件 | 行号范围 | 路由前缀 | 职责 |
 |---|---|---|---|
-| `chat.py` | **1-461** | `/chat` | 问答（流式 + 非流式）、历史、反馈 |
+| `chat.py` | **1-465** | `/chat` | 问答（流式 + 非流式）、历史、反馈 |
 | `knowledge.py` | **1-178** | `/knowledge` | 知识库上传 / 删除 / 搜索 / 重建索引 |
-| `dify.py` | **1-376** | `/retrieval`、`/dify` | 把自己接成 Dify 的"外部知识库" |
-| `memory.py` | **1-133** | `/memory` | 记忆读写运维（灵魂、事实、画像、蒸馏） |
-| `workflow.py` | **1-146** | `/workflow` | 工作流状态查询与手动触发（拓扑声明在此，加载时与编译图做断言） |
-| `evaluation.py` | **1-80** | `/evaluate` | 检索评测、报告、改进建议、反馈统计 |
+| `dify.py` | **1-379** | `/retrieval`、`/dify` | 把自己接成 Dify 的"外部知识库" |
+| `memory.py` | **1-134** | `/memory` | 记忆读写运维（灵魂、事实、画像、蒸馏） |
+| `workflow.py` | **1-152** | `/workflow` | 工作流状态查询与手动触发（拓扑声明在此，加载时与编译图做断言） |
+| `evaluation.py` | **1-81** | `/evaluate` | 检索评测、报告、改进建议、反馈统计 |
 | `test.py` | **1-33** | `/test` | 自测：全量 9 项 / 快速 3 项 / 健康检查 |
 | `routing.py` | **1-110** | `/routing` | **混合路由预演**：`POST /routing/intent-preview`（判给谁 + 逐层证据 + 耗时）与 `GET /routing/catalog`（意图目录快照）。只读、无副作用、不进任何子 Agent |
 
@@ -212,16 +212,16 @@
 > 把"这句话会被判成哪条路、凭什么"逐条摊开。**生产只采信它的前两层**
 > （锚定 + 词面，零成本零模型），判不了的交回模型——**先能看清，再敢切换**。
 
-### 3.3 `app/graph/` — LangGraph 编排层（1023 行）
+### 3.3 `app/graph/` — LangGraph 编排层（1030 行）
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
 | `state.py` | **1-169** | 全局状态 `GraphState` + 初始态工厂（`scene` 与 `intent_type` 的分工见模块 docstring） |
-| `nodes.py` | **1-566** | 9 个节点的实现（含五个 Agent） |
+| `nodes.py` | **1-573** | 9 个节点的实现（含五个 Agent） |
 | `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
 | `workflow_graph.py` | **1-192** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（5455 行）
+### 3.4 `app/core/` — 调度与基础能力（5499 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -252,7 +252,7 @@
 | `rag_engine.py` | **1-109** | RAG 五层的兼容门面 |
 | `rate_limit.py` | **1-64** | 按 IP 的内存滑动窗口限流 |
 | `source_acl.py` | **1-48** | 用户 → 可访问文档白名单 |
-| `errors.py` | **1-28** | 统一异常基类 |
+| `errors.py` | **1-72** | 统一异常基类 + 对外故障文案的唯一构造处 |
 | `llm_factory.py` | **1-23** | 向后兼容壳（实现已迁至 `providers/llm.py`） |
 
 ### 3.5 `app/rag/` — RAG 五层（2934 行）
@@ -324,7 +324,7 @@
 
 ### 4.1 应用入口与配置
 
-#### 📍 `app/main.py`（1-237）
+#### 📍 `app/main.py`（1-240）
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
@@ -335,7 +335,7 @@
 | `trace_and_rate_limit` | 156-180 | 中间件：注入 trace_id → 鉴权 → 限流 |
 | `index` | 204-206 | 首页面板 |
 | `health` | 210-218 | 健康检查（含配置快照） |
-| `global_exception_handler` | 222-237 | 全局异常兜底（只回 trace_id，不回显内部细节） |
+| `global_exception_handler` | 222-240 | 全局异常兜底（只回 trace_id，不回显内部细节） |
 
 **实现原理（小白版）**：
 
@@ -352,6 +352,8 @@
 - **全局异常处理器** 只返回一句通用文案 + trace_id。
   为什么不回显异常原文？因为它可能含文件路径、内网地址、依赖版本等内部信息。
   返回 trace_id 既不让用户看到内部细节，又能让运维在 `logs/trace.jsonl` 里精确定位。
+  这与 `/chat/ask`、`/chat/ask/stream` 走的是**同一个构造**（`app/core/errors.py`
+  的 `public_detail`），区别只在这里把 message 与 trace_id 分成两个字段。
 
 **设计取舍**：
 `AUTH_EXEMPT_PATHS` 里的 Dify 接口有自己的 Key 校验，所以两条鉴权链**不能互相替代**。
@@ -442,19 +444,19 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 
 ### 4.2 HTTP 接口层 `app/api/`
 
-#### 📍 `app/api/chat.py`（1-461）—— 最核心的接口
+#### 📍 `app/api/chat.py`（1-465）—— 最核心的接口
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `collect_soft_warnings` | 66-101 | 收集可降级故障（唯一的读取点） |
-| `FeedbackRequest` | 154-162 | 反馈请求体 |
-| `chat_ask` | 178-258 | `POST /chat/ask` 非流式问答 |
-| `chat_ask_stream` | 262-432 | `POST /chat/ask/stream` SSE 流式问答 |
-| ├ `sse`（嵌套） | 277-278 | SSE 事件格式化 |
-| └ `event_stream`（嵌套） | 280-422 | 事件生成器（stage/token/meta/error/done） |
-| `chat_history` | 436-438 | `GET /chat/history/{session_id}` |
-| `chat_clear` | 442-445 | `DELETE /chat/history/{session_id}` |
-| `chat_feedback` | 449-461 | `POST /chat/feedback` 点赞/点踩 |
+| `collect_soft_warnings` | 67-102 | 收集可降级故障（唯一的读取点） |
+| `FeedbackRequest` | 155-163 | 反馈请求体 |
+| `chat_ask` | 179-259 | `POST /chat/ask` 非流式问答 |
+| `chat_ask_stream` | 263-436 | `POST /chat/ask/stream` SSE 流式问答 |
+| ├ `sse`（嵌套） | 278-279 | SSE 事件格式化 |
+| └ `event_stream`（嵌套） | 281-426 | 事件生成器（stage/token/meta/error/done） |
+| `chat_history` | 440-442 | `GET /chat/history/{session_id}` |
+| `chat_clear` | 446-449 | `DELETE /chat/history/{session_id}` |
+| `chat_feedback` | 453-465 | `POST /chat/feedback` 点赞/点踩 |
 
 **实现原理（小白版）**：
 
@@ -487,18 +489,18 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 | 文件 | 关键行号 | 要点 |
 |---|---|---|
 | `knowledge.py` | 上传 `79-141`、删除 `145-148`、搜索 `152-162`、重建 `166-178` | 上传两道闸：先看 `Content-Length` 预检，再分块累加（`_read_limited:31-50`），**不能先全量读进内存再判大小**；`_REBUILD_LOCK:19` 保证重建索引串行 |
-| `dify.py` | 检索 `209-258`、OpenAPI `280-355` | 见下方"score 归一化"说明 |
-| `memory.py` | soul 写入 `43-78` | `AUTH_ENABLED=false` 时直接 403——"一次改掉全站人格"的能力不该存在于无防护服务上 |
-| `workflow.py` | 拓扑校验 `58-79`、执行 `99-146` | `_validate_topology` 在模块加载时比对声明拓扑与真实图，防止前端面板与真实执行路径漂移 |
+| `dify.py` | 检索 `210-261`、OpenAPI `283-358` | 见下方"score 归一化"说明 |
+| `memory.py` | soul 写入 `44-79` | `AUTH_ENABLED=false` 时直接 403——"一次改掉全站人格"的能力不该存在于无防护服务上 |
+| `workflow.py` | 拓扑校验 `59-80`、执行 `100-152` | `_validate_topology` 在模块加载时比对声明拓扑与真实图，防止前端面板与真实执行路径漂移 |
 | `routing.py` | 阈值快照 `54-72`、预演 `76-93`、目录 `97-110` | **纯预演、零副作用**：不写 `request_ctx`、不调子 Agent、不写库。旧的统计 / 标定端点已随自造路由删除，`match_intent` 上也没有 `record` 参数了 |
-| `evaluation.py` | 评测 `18-46`、报告 `50-56` | 会真实调用 embedding——**每次评测都是一次真实的远端向量化**，按需控制用例数 |
+| `evaluation.py` | 评测 `19-47`、报告 `51-57` | 会真实调用 embedding——**每次评测都是一次真实的远端向量化**，按需控制用例数 |
 | `test.py` | 全量 `13-17`、快速 `21-24` | `/test/all` 会真实调 LLM，**不要挂到探针轮询上** |
 
 **Dify 接入的坑（小白版）**：
 Dify 的 `score_threshold` 是 **0~1 的绝对相关度**语义，
 而本项目的 RRF 融合分只有约 **0.016** 量级（因为 RRF 分只取决于排名）。
 不归一化的话，用户在 Dify 界面把阈值调到 0.02 以上就**永远检索不到任何东西**，
-而且极难定位。所以 `_normalize_score`（`dify.py:74-91`）把分数除以理论上限映射到 0~1。
+而且极难定位。所以 `_normalize_score`（`dify.py:75-92`）把分数除以理论上限映射到 0~1。
 
 另一个坑：Dify 遇到非 200 响应只会在界面上抛一个通用错误，
 所以业务错误必须返回 **200 + `error_code`**，才能把"未配置 DIFY_API_KEY"这类原因显示给用户。
@@ -535,7 +537,7 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 `soft_warnings` 只做观测（记录但不影响流程）。
 混在一起会导致"检索抖一下就把用户推给人工"。
 
-#### 📍 `app/graph/nodes.py`（1-566）—— 9 个节点
+#### 📍 `app/graph/nodes.py`（1-573）—— 9 个节点
 
 | 节点 | 行号 | 职责 | 编码原则 |
 |---|---|---|---|
@@ -545,13 +547,13 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 | `out_of_scope_node` | 215-236 | 越界常量话术 | 答案来自常量，不经模型生成 |
 | `simple_rag_node` | 259-274 | 简单 RAG：单次混合检索 | 检索失败只记 `soft_warnings`，不转人工 |
 | `complex_rag_node` | 277-295 | 复杂 RAG：拆解 → 多检索 → 合并去重 | 原问题始终参与检索（拆歪了是静默错误） |
-| `tool_node` | 347-471 | **工具 Agent**：function calling 循环 | 只写 `tool_degraded`；改道交给 `tool_route_edge` |
-| `generate_answer_node` | 503-548 | 受控生成 + 挂 span 属性 | 把 ttft / 截断信息写进 state 和 span |
-| `human_fallback_node` | 554-566 | 人工兜底话术 | 不回显异常原文 |
+| `tool_node` | 347-474 | **工具 Agent**：function calling 循环 | 只写 `tool_degraded`；改道交给 `tool_route_edge` |
+| `generate_answer_node` | 506-551 | 受控生成 + 挂 span 属性 | 把 ttft / 截断信息写进 state 和 span |
+| `human_fallback_node` | 557-573 | 人工兜底话术 | 不回显异常原文；trace 的 detail 也不放诊断串（只写「已转人工兜底」） |
 | `_apply_retrieval` | 242-256 | 三路检索共用的「取证据」步骤 | 抽出来避免三个 Agent 各写一遍 |
 | `_collect_degradations` | 301-328 | 汇总本轮降级为可读字符串 | 降级必须留痕，否则"答得差"无从归因 |
 | `_failed_business_tools` | 331-344 | 挑出"业务工具执行失败" | 与"参数不合 schema"区分开：后者是模型侧问题，不转人工 |
-| `build_generation_inputs` | 477-500 | 为 L4 准备检索输入 | 两条链路共用，禁止各拼一份 |
+| `build_generation_inputs` | 480-503 | 为 L4 准备检索输入 | 两条链路共用，禁止各拼一份 |
 
 **设计取舍：失败处置的统一判据是「能不能从其他来源得到答案」**
 
@@ -930,8 +932,28 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 | `request_ctx.py` | `get/set_query_vector` 139-146 | 用 `contextvars` 存 `(query文本, 向量)`，读时校验文本一致才算命中 |
 | `source_acl.py` | `resolve_allowed_sources` 24-48 | 返回三种语义：`None` 不限制 / `[]` 全拒 / 其余是 fnmatch 模式。**fail-closed** |
 | `llm_access.py` | `content_of` 23-40 / `default_model` 43-52 | 调用聊天模型的公共管道。这两个函数曾在 4 个模块里**各抄一遍（共 8 份）**、函数体 sha1 完全相同；改一处忘一处会让另外三条链路把回复静默读成空串。`default_model` **必须**惰性 import |
-| `errors.py` | `AppError` 9-16 | 类属性 `default_message` 提供默认文案 |
+| `errors.py` | `trace_ref` 35-41 / `public_detail` 44-50 / `AppError` 53-60 | 类属性 `default_message` 提供默认文案；`public_detail` 是**全项目唯一的「对外故障文案」构造处**（见下方「对外错误口径」） |
 | `observability.py` | `setup_langsmith` 20-39 | 靠设环境变量让 LangChain 自动上报，业务零改动 |
+
+**对外错误口径（P0-2 定下来的规则）**：
+
+> 响应体里**不出现任何异常信息**（原文 / 类名 / 堆栈 / 路径）。
+> 故障描述只有一种形态 —— `public_detail("评测失败")`，即「固定前缀 + trace_id」。
+
+这条规则此前并不成立：同一次故障，`/chat/ask` 只回 trace_id，
+`/chat/ask/stream` 却回显 `str(exc)` —— 用 curl 看不到的东西，浏览器里能看到。
+现在所有外发出口（HTTP `detail`、SSE 的 `error` 事件、Dify 的 `_err`、
+全局 500 处理器、`/workflow/execute` 的 `error_msg` 字段）都走这一个构造。
+
+两条配套约束，由 `tests/test_error_boundary.py` 守：
+
+1. **边界层不接触异常对象**：`app/api/` 与 `app/main.py` 里的 `except` 不把异常
+   绑到名字上（`logger.exception` 不需要变量）。只要异常对象到了边界层，
+   就一定会有人顺手把它拼进响应里 —— 堵住"拿到对象"比穷举"怎么拼"可靠。
+2. **`trace` 的 `detail` 是给人看的事实，不是诊断串**：`error_msg` 按设计可以含
+   异常原文（`tests/test_tool_agent.py` 钉着这条），但它**不该被复制进会被下发的
+   字段**。此前 `human_fallback_node` 把 `error_msg[:60]` 塞进 trace，
+   等于给「不回显异常」开了一条侧路。
 
 ---
 
@@ -2017,12 +2039,12 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **466 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **514 passed** |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（5 项发现 = 豁免清单 5 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 598 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 616 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -2059,17 +2081,17 @@ open http://127.0.0.1:8001/static/index.html
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（16153 行）**
+**应用代码 `app/`（16222 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
 | `__init__.py` | 1 | `api/__init__.py` | 1 |
-| `api/chat.py` | 461 | `api/dify.py` | 376 |
-| `api/evaluation.py` | 80 | `api/knowledge.py` | 178 |
-| `api/memory.py` | 133 | `api/routing.py` | 110 |
-| `api/test.py` | 33 | `api/workflow.py` | 146 |
+| `api/chat.py` | 465 | `api/dify.py` | 379 |
+| `api/evaluation.py` | 81 | `api/knowledge.py` | 178 |
+| `api/memory.py` | 134 | `api/routing.py` | 110 |
+| `api/test.py` | 33 | `api/workflow.py` | 152 |
 | `config.py` | 765 | `core/__init__.py` | 1 |
-| `core/errors.py` | 28 | `core/llm_factory.py` | 23 |
+| `core/errors.py` | 72 | `core/llm_factory.py` | 23 |
 | `core/observability.py` | 39 | `core/prompts.py` | 240 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 64 |
 | `core/request_ctx.py` | 213 | `core/router_agent.py` | 427 |
@@ -2084,8 +2106,8 @@ open http://127.0.0.1:8001/static/index.html
 | `db/__init__.py` | 1 | `db/enterprise_db.py` | 170 |
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
 | `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
-| `graph/nodes.py` | 566 | `graph/state.py` | 169 |
-| `graph/workflow_graph.py` | 192 | `main.py` | 237 |
+| `graph/nodes.py` | 573 | `graph/state.py` | 169 |
+| `graph/workflow_graph.py` | 192 | `main.py` | 240 |
 | `memory/__init__.py` | 185 | `memory/chat_history.py` | 70 |
 | `memory/consolidator.py` | 154 | `memory/dream.py` | 148 |
 | `memory/long_term.py` | 178 | `memory/short_term.py` | 179 |
@@ -2105,24 +2127,26 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/__init__.py` | 1 | `tests/conftest.py` | 85 |
 | `tests/deadcode_allowlist.py` | 92 | `tests/fakes.py` | 102 |
 | `tests/test_biz_correctness.py` | 769 | `tests/test_chunk_keys.py` | 207 |
-| `tests/test_chunking_baseline.py` | 158 | `tests/test_deadcode.py` | 343 |
-| `tests/test_dify_api.py` | 422 | `tests/test_eval_section.py` | 74 |
+| `tests/test_chunking_baseline.py` | 158 | `tests/test_config_contract.py` | 204 |
+| `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 422 |
+| `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
 | `tests/test_fixes_assessment.py` | 252 | `tests/test_infra.py` | 224 |
 | `tests/test_memory_pipeline.py` | 197 | `tests/test_meta_align.py` | 132 |
 | `tests/test_multi_agent.py` | 953 | `tests/test_parent_chunk.py` | 112 |
 | `tests/test_pdf_image.py` | 97 | `tests/test_rag.py` | 204 |
-| `tests/test_routing_funnel.py` | 1413 | `tests/test_service.py` | 247 |
-| `tests/test_short_term_symmetry.py` | 284 | `tests/test_soft_warnings.py` | 253 |
-| `tests/test_soul_write.py` | 124 | `tests/test_span_tree_smoke.py` | 264 |
-| `tests/test_sqlite_tools.py` | 258 | `tests/test_structure.py` | 203 |
-| `tests/test_structure_chunking.py` | 178 | `tests/test_tool_agent.py` | 720 |
-| `tests/test_vector_store_backends.py` | 381 | `scripts/baseline_snapshot.py` | 133 |
-| `scripts/check_vector_db.py` | 307 | `scripts/chunk_metrics.py` | 171 |
-| `scripts/chunking_ab.py` | 326 | `scripts/deadcode_scan.py` | 904 |
-| `scripts/eval_generation.py` | 91 | `scripts/fix_doc_linenos.py` | 183 |
-| `scripts/module_inventory.py` | 83 | `scripts/probe_routing.py` | 214 |
-| `scripts/refgraph_scan.py` | 607 | `scripts/seed_enterprise_db.py` | 142 |
-| `scripts/verify_doc_linenos.py` | 802 | `scripts/verify_milvus_lite.py` | 123 |
+| `tests/test_routing_funnel.py` | 1413 | `tests/test_self_check.py` | 60 |
+| `tests/test_service.py` | 247 | `tests/test_short_term_symmetry.py` | 284 |
+| `tests/test_soft_warnings.py` | 253 | `tests/test_soul_write.py` | 124 |
+| `tests/test_span_tree_smoke.py` | 264 | `tests/test_sqlite_tools.py` | 258 |
+| `tests/test_structure.py` | 203 | `tests/test_structure_chunking.py` | 178 |
+| `tests/test_tool_agent.py` | 720 | `tests/test_vector_store_backends.py` | 381 |
+| `scripts/baseline_snapshot.py` | 133 | `scripts/check_vector_db.py` | 307 |
+| `scripts/chunk_metrics.py` | 171 | `scripts/chunking_ab.py` | 326 |
+| `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
+| `scripts/fix_doc_linenos.py` | 183 | `scripts/module_inventory.py` | 83 |
+| `scripts/probe_routing.py` | 214 | `scripts/refgraph_scan.py` | 607 |
+| `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 802 |
+| `scripts/verify_milvus_lite.py` | 123 | | |
 
 ### 附录 B：数据与配置
 
@@ -2141,7 +2165,7 @@ open http://127.0.0.1:8001/static/index.html
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **598 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+它对本文的 **616 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
 覆盖十三类写法：
 
 | # | 声明类型 | 例子 |
@@ -2163,7 +2187,7 @@ python scripts/verify_doc_linenos.py
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：598 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：616 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 

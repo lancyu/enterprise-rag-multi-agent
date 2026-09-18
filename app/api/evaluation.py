@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.errors import public_detail
 from app.rag import evaluator
 from app.utils.logger import logger
 
@@ -41,9 +42,9 @@ def run_retrieval_evaluation(cases: Optional[list] = None, top_k: Optional[int] 
         return {"code": 0, **report}
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("检索评测失败")
-        raise HTTPException(status_code=500, detail=f"评测失败：{exc}")
+        raise HTTPException(status_code=500, detail=public_detail("评测失败"))
 
 
 @router.get("/report")
@@ -51,9 +52,9 @@ def system_report(include_eval: bool = False) -> dict:
     """系统综合报告：五层状态 + 反馈统计（include_eval=true 时附带检索评测）。"""
     try:
         return {"code": 0, **evaluator.build_report(include_eval=include_eval)}
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("报告生成失败")
-        raise HTTPException(status_code=500, detail=f"报告生成失败：{exc}")
+        raise HTTPException(status_code=500, detail=public_detail("报告生成失败"))
 
 
 @router.get("/suggestions")
@@ -69,9 +70,9 @@ def improvement_suggestions(include_eval: bool = False) -> dict:
                 "good_rate": (report.get("feedback") or {}).get("good_rate"),
             },
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("建议生成失败")
-        raise HTTPException(status_code=500, detail=f"建议生成失败：{exc}")
+        raise HTTPException(status_code=500, detail=public_detail("建议生成失败"))
 
 
 @router.get("/feedback")
