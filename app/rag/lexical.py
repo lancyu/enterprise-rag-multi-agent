@@ -240,6 +240,19 @@ class LexicalIndex:
     def __len__(self) -> int:
         return len(self._doc_len)
 
+    def list_sources(self) -> List[Dict[str, Any]]:
+        """按来源聚合片段数 —— 与向量库 ``list_sources()`` **同一返回形态**。
+
+        对账（``app/rag/indexer.reconcile``）要拿两处存储的来源集合做差集；
+        两处各自定义一种返回结构，比较的那一行就得写两份适配代码，
+        而这类"适配器"正是最容易漏掉一边的东西。
+        """
+        agg: Dict[str, int] = {}
+        for meta in self._doc_meta.values():
+            src = str(meta.get("source", "unknown"))
+            agg[src] = agg.get(src, 0) + 1
+        return [{"source": k, "chunks": v} for k, v in sorted(agg.items(), key=lambda x: -x[1])]
+
 
 # ---------------------------------------------------------------------------
 # 全局单例

@@ -526,17 +526,91 @@ def index_chunks(chunks: List[Document], refit_idf: bool = False) -> int:
 # ---------------------------------------------------------------------------
 # 对外：全量 / 增量 / 删除
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 增量索引的对账（P1-5）
+# ---------------------------------------------------------------------------
+def resolve_docstore_strategy() -> str:
+    """解析实际生效的对账策略；配置写了未知值时**降级并告警**。
+
+    为什么不能静默：策略名拼错（`upsert` 少个 s）时，"静默用默认值"与"配置生效了"
+    在结果上完全一样，排查时没有任何线索 —— 写错必须留痕。
+    """
+    raw = config.DOCSTORE_STRATEGY
+    if raw in config.DOCSTORE_STRATEGY_CHOICES:
+        return raw
+    logger.warning(
+        "DOCSTORE_STRATEGY=%r 不是合法取值（只认 %s），已降级为 %r。请检查 .env",
+        raw, " / ".join(config.DOCSTORE_STRATEGY_CHOICES), config.DOCSTORE_STRATEGY_DEFAULT,
+    )
+    return config.DOCSTORE_STRATEGY_DEFAULT
+
+
+def _source_set(entries: List[Dict[str, Any]]) -> set:
+    return {str(e.get("source", "unknown")) for e in entries}
+
+
+def reconcile() -> Dict[str, Any]:
+    """只读对账：向量库 / 词面索引 / 父块三处的**条数与来源集合**是否一致。
+
+    为什么要单独有一个对账函数：三处存储是分别维护的（向量库、词面倒排、父块旁路），
+    任何一处漏删都不会报错，只会表现为「某条知识怎么问都检索不到」或
+    「删掉的文档还在召回里」。这类故障的共同点是**没有任何一方报错** ——
+    只有把三处摆在一起比一次才看得见。
+
+    返回 ``consistent=False`` 时调用方应当告警，而不是继续当没事。
+    """
+    store = get_vector_store()
+    lexical = get_lexical_index()
+
+    vec_sources = store.list_sources()
+    lex_sources = lexical.list_sources()
+    parent_count = parent_store.count() if config.PARENT_CHUNK_ENABLED else None
+
+    vec_set, lex_set = _source_set(vec_sources), _source_set(lex_sources)
+    return {
+        "vector_chunks": store.count(),
+        "lexical_chunks": len(lexical),
+        "parent_sources": parent_count,
+        # 条数不等**不一定**是故障（父块不进词面索引），但来源集合不等一定是。
+        "only_in_vector": sorted(vec_set - lex_set),
+        "only_in_lexical": sorted(lex_set - vec_set),
+        "vector_sources": len(vec_set),
+        "lexical_sources": len(lex_set),
+        "consistent": vec_set == lex_set,
+    }
+
+
 def build_index() -> Dict[str, Any]:
-    """全量重建索引：L1 数据准备 → L2 切片写入。"""
+    """重建索引：L1 数据准备 → L2 切片写入 → 对账。
+
+    对账策略由 ``config.DOCSTORE_STRATEGY`` 决定（三态，见
+    ``config.DOCSTORE_STRATEGY_CHOICES``）；默认 ``upserts_and_delete``。
+
+    ⚠️ 三态里只有 ``upserts_and_delete`` 能保证「源删了索引里也跟着删」。
+    另两种是**有意保留**的弱语义（语料只会增加、或不做删除的场景），
+    不是缺陷 —— 但选了它们就必须接受「消失的来源会留在索引里」。
+    """
     global _LAST_INDEX_STATS
 
+    strategy = resolve_docstore_strategy()
     raw_documents = load_all_documents()
     prepared = prepare_documents(raw_documents)   # L1
     store = get_vector_store()
-    store.clear()
-    get_lexical_index().clear()                   # 词面索引与向量库同步全量重建
-    if config.PARENT_CHUNK_ENABLED:
-        parent_store.clear()                      # 父块旁路存储同步重建
+
+    if strategy == "duplicates_only":
+        # 只补新片段。已存在的片段靠 **chunk_id（= source + 内容哈希）** 覆盖：
+        # id 本身就是内容指纹，不需要另存一份 sha1 —— 同一语义只定义一次。
+        pass
+    elif strategy == "upserts":
+        # 覆盖同名来源，但**不**删除语料里已消失的来源
+        for source in _source_set(store.list_sources()):
+            store.delete_by_source(source)
+            get_lexical_index().remove_by_source(source)
+    else:  # upserts_and_delete：清空三处再重建，是唯一能保证不留孤儿的实现
+        store.clear()
+        get_lexical_index().clear()               # 词面索引与向量库同步全量重建
+        if config.PARENT_CHUNK_ENABLED:
+            parent_store.clear()                  # 父块旁路存储同步重建
 
     chunks = chunk_documents(prepared)
     count = index_chunks(chunks, refit_idf=True)
@@ -555,10 +629,22 @@ def build_index() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # 对账：建完就比一次。不一致时**告警**而不是静默 ——
+    # 「重跑一次会不会多一份、源删了还在不在」此前没有任何机制会回答这两个问题。
+    stats["strategy"] = strategy
+    stats["reconcile"] = reconcile()
+    if not stats["reconcile"]["consistent"]:
+        logger.warning(
+            "索引对账不一致：仅向量库有 %s；仅词面索引有 %s。"
+            "同一片段应当在两处同时存在，否则会出现「某条知识怎么问都检索不到」",
+            stats["reconcile"]["only_in_vector"] or "无",
+            stats["reconcile"]["only_in_lexical"] or "无",
+        )
+
     _LAST_INDEX_STATS = stats
     logger.info(
-        "L2 索引构建完成：原始 %d 篇 → 清洗后 %d 篇 → 片段 %d 条",
-        len(raw_documents), len(prepared), count,
+        "L2 索引构建完成：原始 %d 篇 → 清洗后 %d 篇 → 片段 %d 条（策略=%s）",
+        len(raw_documents), len(prepared), count, strategy,
     )
     return stats
 

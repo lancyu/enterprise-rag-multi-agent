@@ -458,6 +458,22 @@ RERANK_TIMEOUT: int = int(_env("RERANK_TIMEOUT", "10"))
 #: —— 见 `effective_rerank_candidates` 的不变量说明。
 RERANK_CANDIDATES: int = int(_env("RERANK_CANDIDATES", "64"))
 
+# ============================================================
+# 增量索引的对账策略（见 app/rag/indexer.build_index）
+# ============================================================
+#: 合法取值（与 LlamaIndex 的 DocstoreStrategy 同名同义，便于对照）：
+#:   upserts             覆盖同名片段，**不**删除语料里已经消失的来源
+#:   duplicates_only    只补新片段，已存在的原样保留（不覆盖）
+#:   upserts_and_delete 覆盖 + 删除语料里已消失的来源（**默认**，语义最完整）
+DOCSTORE_STRATEGY_CHOICES: tuple = ("upserts", "duplicates_only", "upserts_and_delete")
+# 读取时统一 strip + lower（与 VECTOR_DB_TYPE 同一套路）：.env 里写成
+# " UPSERTS_AND_DELETE " 也能识别，不归一化就会静默落到兜底分支。
+DOCSTORE_STRATEGY: str = os.getenv("DOCSTORE_STRATEGY", "upserts_and_delete").strip().lower()
+#: 未知取值时降级到它（**降级与告警都在 app/rag/indexer 里做** —— 本模块刻意不 import
+#: 任何 logger：config → utils.logger → core.tracing → … 会重新形成一个环，
+#: 而 P1-6 正是为了拆环才把 config 做成叶子）。
+DOCSTORE_STRATEGY_DEFAULT: str = "upserts_and_delete"
+
 
 def effective_rerank_candidates(top_k: int) -> int:
     """实际参与精排的候选条数 —— **不得小于最终返回的条数**。
