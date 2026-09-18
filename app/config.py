@@ -23,10 +23,21 @@ def _env(key: str, default: str) -> str:
 
 
 def _env_bool(key: str, default: bool) -> bool:
-    """读取布尔型环境变量。
+    """读取布尔型环境变量。**全项目布尔配置的唯一解析处。**
 
-    统一此前散落的 ``os.getenv(k, "false").strip().lower() not in (...)`` 写法，
-    避免各处判定集合不一致（有的认 "off" 有的不认）。
+    本函数当初就是为了统一 ``os.getenv(k, "false").strip().lower() not in (...)``
+    这种写法而建的，但建完之后**仍有 8 处**在用内联写法，且两边的判定集合不同：
+    内联版不认 ``"none"``，于是 ``MEMORY_ENABLED=none`` 与 ``CHUNK_CONTEXT_HEADER=none``
+    会得到**相反**的结果——同一个词，一个是"开"一个是"关"，且不报错。
+    现已全部收敛到这里，由 ``tests/test_infra.py`` 的
+    ``test_all_bool_configs_parse_identically`` 守着「所有 bool 配置对同一串输入的
+    解析必须一致」。
+
+    ``"none"`` 归入**假**：对布尔开关来说，"给了个空词"最危险的解读是"开"——
+    一个手滑写成 ``=none`` 的配置会静默开启某个本不该开的功能；反向解读最多是
+    功能没开、看得见。**取错误方向不对称的那一侧。**
+
+    非空即真（``"1"/"yes"/"on"/"true"`` 及任何未列出的非空值 → True）。
     """
     val = os.getenv(key)
     if val is None or val.strip() == "":
@@ -64,7 +75,7 @@ LLM_MAX_TOKENS: int = int(_env("LLM_MAX_TOKENS", "1024"))
 # 是否在流式请求中携带 stream_options（含 token 用量统计）。多数 OpenAI 兼容服务
 # （如 Moonshot/Kimi）不支持该参数，会拒绝整个流式请求，故默认关闭以保证兼容；
 # 需要 token 用量统计时打开即可。
-LLM_STREAM_USAGE: bool = os.getenv("LLM_STREAM_USAGE", "false").strip().lower() not in ("0", "false", "no", "off")
+LLM_STREAM_USAGE: bool = _env_bool("LLM_STREAM_USAGE", False)
 # 是否关闭推理模型的「思考」阶段（默认关闭该开关，即保持模型默认行为）。
 #
 # 为什么需要它：本项目的默认模型 kimi-k2.6 是**推理模型**——它会在正文之前先产出
@@ -82,7 +93,7 @@ LLM_STREAM_USAGE: bool = os.getenv("LLM_STREAM_USAGE", "false").strip().lower() 
 #
 # 注意：关闭思考后该模型只接受 temperature=0.6（开启思考时只接受 1.0），
 # 两者需配套修改，否则接口会以 400 明确拒绝——错误是自解释的。
-LLM_DISABLE_THINKING: bool = os.getenv("LLM_DISABLE_THINKING", "false").strip().lower() not in ("0", "false", "no", "off")
+LLM_DISABLE_THINKING: bool = _env_bool("LLM_DISABLE_THINKING", False)
 # 自造的限流重试包装器（_RateLimitRetryModel）及其三个配置项
 # （LLM_MAX_RETRIES / LLM_RETRY_BASE_DELAY / LLM_RETRY_MAX_DELAY）**已随
 # 「改用不限流模型」一并移除**。模型现在直连 ChatOpenAI，重试由
@@ -96,7 +107,7 @@ LLM_DISABLE_THINKING: bool = os.getenv("LLM_DISABLE_THINKING", "false").strip().
 # 开启：可提前发现 Key / 模型名错误并优雅降级为 Mock；代价是启动多 1~2 次调用与
 #   1~2 秒。⚠️ 过去不敢开是因为"怕刷爆限频账号的配额"，**该顾虑已随账号更换消失**
 #   ——若更看重"启动即发现配置错误"，现在打开它的代价比以前低得多。
-LLM_HEALTH_CHECK: bool = os.getenv("LLM_HEALTH_CHECK", "false").strip().lower() not in ("0", "false", "no", "off")
+LLM_HEALTH_CHECK: bool = _env_bool("LLM_HEALTH_CHECK", False)
 
 # 是否启用真实大模型：未配置 Key 时自动降级为本地 Mock 模型（保证系统可离线跑通）
 USE_REAL_LLM: bool = bool(LLM_API_KEY)
@@ -425,7 +436,7 @@ LEXICAL_BM25_B: float = float(_env("LEXICAL_BM25_B", "0.75"))
 # cross-encoder 对召回候选做二次评分重排，真正提升「该进 Top-K 却排在后面」的片段。
 # 与 reorder（零模型交错重排）正交：rerank 用模型打分改善排序，代价是一次前向（CPU 约 80~120ms）。
 # 默认关闭：需额外依赖 sentence-transformers，未安装时自动降级为「不精排」，绝不拖垮检索。
-RERANK_ENABLED: bool = os.getenv("RERANK_ENABLED", "false").strip().lower() not in ("0", "false", "no", "off")
+RERANK_ENABLED: bool = _env_bool("RERANK_ENABLED", False)
 # 中文场景常用 BGE 系列重排模型（也支持任意 sentence-transformers 兼容 cross-encoder）
 RERANK_MODEL: str = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 # 参与精排的候选条数：先粗召回 Top-N 交给 cross-encoder，精排后再截 Top-K
@@ -437,7 +448,7 @@ RERANK_TOP_N: int = int(_env("RERANK_TOP_N", "10"))
 # 设置 LANGCHAIN_TRACING_V2 / API Key / Project 后，LangChain 的每次 LLM 调用
 # 自动上报 trace 到 LangSmith 控制台，业务代码零改动。需 pip install langsmith。
 # 关键约束：必须在「第一次 LLM 调用」前设置，故在 llm_factory 导入时执行（幂等）。
-LANGSMITH_ENABLED: bool = os.getenv("LANGSMITH_ENABLED", "false").strip().lower() not in ("0", "false", "no", "off")
+LANGSMITH_ENABLED: bool = _env_bool("LANGSMITH_ENABLED", False)
 LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY", "")
 LANGSMITH_PROJECT: str = os.getenv("LANGSMITH_PROJECT", "langgraph-enterprise-bot")
 # 自托管 LangSmith 时填写；留空走官方 SaaS（smith.langchain.com）
@@ -459,7 +470,7 @@ RATE_LIMIT_PER_MINUTE: int = int(_env("RATE_LIMIT_PER_MINUTE", "20"))  # 单 IP 
 # ============================================================
 # 长期记忆落盘目录（SOUL.md / USER.md / MEMORY.md / history.jsonl）
 MEMORY_DIR: Path = Path(os.getenv("MEMORY_DIR", BASE_DIR / "memory_store"))
-MEMORY_ENABLED: bool = os.getenv("MEMORY_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+MEMORY_ENABLED: bool = _env_bool("MEMORY_ENABLED", True)
 
 # 短期记忆：注入 prompt 的最近对话轮数（超出部分走压缩归档）
 SHORT_TERM_WINDOW: int = int(_env("SHORT_TERM_WINDOW", "6"))
@@ -471,7 +482,7 @@ SHORT_TERM_MAX_CHARS: int = int(_env("SHORT_TERM_MAX_CHARS", "2000"))
 # 长度恒为常数，用总长度做阈值会退化成「每一轮都触发」（每轮一次模型调用）。
 # CONSOLIDATE_THRESHOLD 比的是**单次真正压缩的条数**，直接对应模型调用成本：
 # 默认 10 条 + 尾部保留 4 条 ⇒ 每约 12 条新消息（6 轮）压缩一次。
-CONSOLIDATE_ENABLED: bool = os.getenv("CONSOLIDATE_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+CONSOLIDATE_ENABLED: bool = _env_bool("CONSOLIDATE_ENABLED", True)
 CONSOLIDATE_THRESHOLD: int = int(_env("CONSOLIDATE_THRESHOLD", "10"))  # 单次归档至少要压缩的消息条数
 CONSOLIDATE_KEEP_TAIL: int = int(_env("CONSOLIDATE_KEEP_TAIL", "4"))  # 尾部保留不归档的条数（约 2 轮）
 
@@ -479,7 +490,7 @@ CONSOLIDATE_KEEP_TAIL: int = int(_env("CONSOLIDATE_KEEP_TAIL", "4"))  # 尾部�
 # 归档累积到 DREAM_BATCH_SIZE 条时自动执行一次，也支持 API 手动触发。
 # 成本受两道闸门控制：① 归档本身要攒够 CONSOLIDATE_THRESHOLD 条才产生；
 # ② 蒸馏要再攒够一整批。因此一次蒸馏摊薄到很多轮对话上。
-DREAM_ENABLED: bool = os.getenv("DREAM_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+DREAM_ENABLED: bool = _env_bool("DREAM_ENABLED", True)
 DREAM_BATCH_SIZE: int = int(_env("DREAM_BATCH_SIZE", "5"))  # 单次蒸馏消费的归档条目数，兼作自动触发阈值
 MAX_HISTORY_ENTRIES: int = int(_env("MAX_HISTORY_ENTRIES", "1000"))  # history.jsonl 保留上限
 
@@ -613,8 +624,18 @@ DIFY_KNOWLEDGE_ID: str = os.getenv("DIFY_KNOWLEDGE_ID", "").strip()
 # 再分块读取并在超限时立即中断 —— 不能先全量读进内存再判断。
 MAX_UPLOAD_BYTES: int = int(_env("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))  # 默认 10MB
 
-# 单篇文档参与索引的最大字符数（超出部分丢弃并告警）。
+# 单篇文档参与索引的最大字符数。**数字只在这里定义一次**——
+# `app/utils/validator.py` 的 `MAX_DOC_CONTENT` 由它派生，不再各写一个 50_000。
 # 这是「防呆」上限：切分后块数随字符数线性增长，无限灌入会拖垮检索与成本。
+#
+# ⚠️ 两个上传入口对**超限的处理不同，而且这个不同是有意的**：
+#   - `POST /knowledge/upload`（JSON，给前端与第三方系统调）：**拒收**并说明超了多少。
+#     调用方是程序，能据此修正后重试；
+#   - `POST /knowledge/upload/file`（multipart，给人拖文件用）：**截断**，并在响应体里
+#     回 `truncated: true`、日志记明截了多少。
+#     人对着一份 300 页 PDF，直接报错等于整篇都不收；截断 + 显式告知才是有用的行为。
+# 共同点是**上限这个数字只有一个来源**；差异只是"超限之后怎么办"，
+# 且两处都必须把结果**显式告知**调用方（拒收有 error，截断有 truncated 字段）。
 MAX_DOC_CONTENT_CHARS: int = int(_env("MAX_DOC_CONTENT_CHARS", "50000"))
 
 # CORS 允许的来源（逗号分隔）。默认通配以方便本地调试；

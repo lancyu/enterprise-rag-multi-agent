@@ -24,7 +24,6 @@ Dify 的「知识检索」节点支持接入外部知识库：它按固定契约
 """
 from __future__ import annotations
 
-import secrets
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Header, Request
@@ -34,6 +33,7 @@ from pydantic import BaseModel, Field
 from app import config
 from app.db.vector_db import get_vector_store
 from app.rag import retriever
+from app.utils.auth_header import api_key_matches, bearer_token
 from app.utils.doc_loader import file_name
 from app.utils.logger import logger, preview
 
@@ -193,12 +193,15 @@ def _check_auth(authorization: Optional[str]) -> Optional[JSONResponse]:
     if not authorization or not authorization.strip():
         return _err(ERR_AUTH_FORMAT, "缺少 Authorization 请求头，期望 'Bearer {API_KEY}' 格式")
 
-    parts = authorization.strip().split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
+    # 解析委托 app.utils.auth_header（全项目唯一实现处）。
+    # 这里原先自己写 `split(None, 1)`，它按**任意空白**切，于是
+    # `"Bearer\txxx"` 在本端点被接受、在入站中间件被拒绝 —— 同一个请求两条入口两种结论。
+    token = bearer_token(authorization)
+    if not token:
         return _err(ERR_AUTH_FORMAT, "Invalid Authorization header format. Expected 'Bearer {API_KEY}'.")
 
-    # 定长安全比较，避免通过响应时间侧信道猜密钥
-    if not secrets.compare_digest(parts[1].strip(), expected):
+    # 定长安全比较（避免了计时侧信道），fail-closed 也一并由它负责
+    if not api_key_matches(token, expected):
         return _err(ERR_AUTH_FAILED, "Authorization failed. Please check your API key.")
     return None
 

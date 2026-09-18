@@ -9,7 +9,7 @@
 主张                              守卫用例
 ================================  ==========================================
 目录必须自洽（拼错的规则不生效）    ``test_catalog_rejects_*``
-与现有实现不漂移（Phase 0 过渡）    ``test_*_match_router_agent``
+门面只 re-export，不许再定义一份    ``test_courtesy_regex_is_defined_exactly_once``
 确定性锚点"宁可漏判不可误判"        ``_ANCHOR_CASES`` / ``_ANCHOR_NEGATIVES``
 句式 guard 反向清零（提到 ≠ 在问）    ``test_comparison_guard_*``
 词面先判、判不了才升语义            ``test_lexical_decisive_*`` / ``test_ambiguous_*``
@@ -51,6 +51,8 @@ from app.core.routing import match_intent
 from app.main import app
 
 _client = TestClient(app)  # 不用 with：避免触发 lifespan 的启动自检（会真实调 LLM）
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: 假 embedder 的"语义维度"。选中"整句标记"作为维度是有意的：
 #: 「年假有多少天」与 policy_single 的 utterance 逐字相同 → 余弦 1.0，
@@ -237,13 +239,17 @@ def test_every_channel_maps_to_a_graph_node():
 
 
 # ===========================================================================
-# 二、与现有实现不漂移（Phase 0 的过渡护栏；Phase 2 后本组应被删除）
+# 二、门面只许 re-export，不许"同值再定义一份"
 #
 # 本组断言一律用 **`is`（同一性）而非 `==`（相等性）**，这不是洁癖：
-# `router_agent` 已降级为门面，它从 `catalog` **re-export** 这些常量。
+# `router_agent` 已降级为门面，它从 `catalog` / `anchors` **re-export** 这些常量。
 # 用 `==` 的话，如果哪天有人把门面改回"本地再定义一份同值常量"，
 # 断言**照样全绿**——而那正是要防的"第二份事实来源"。`is` 才能证明
 # "导出的就是同一个对象"，把 re-export 这条约束变成可验证的事实。
+#
+# ⚠️ 唯一用不了 `is` 的是**正则**：`re.compile` 带内部缓存，同样的 pattern
+# 会返回同一个对象，`is` 于是对"又抄了一份"完全免疫。
+# 那一条改用**文本扫描**，见 `test_courtesy_regex_is_defined_exactly_once`。
 # ===========================================================================
 def test_channels_are_the_same_closed_set_as_router_agent():
     """通道闭集在 catalog 里定义一次，router_agent 只做 re-export。"""
@@ -273,14 +279,50 @@ def test_out_of_scope_answer_is_byte_identical():
     assert catalog.OUT_OF_SCOPE_ANSWER is legacy_router.OUT_OF_SCOPE_ANSWER
 
 
-@pytest.mark.parametrize("name", ["_GREETING_RE", "_THANKS_RE", "_BYE_RE", "_IDENTITY_RE"])
-def test_courtesy_regexes_are_unchanged_from_router_agent(name):
-    """层① 声称"复用已打磨过的整句正则"。这一条把它变成可验证的事实——
-    免得哪天有人"顺手优化"其中一条，把"宁可漏判不可误判"的性质改掉。"""
-    mine = getattr(anchors, name)
-    theirs = getattr(legacy_router, name)
-    assert mine.pattern == theirs.pattern
-    assert mine.flags == theirs.flags
+#: 整句寒暄 / 身份正则的**唯一实现处**。
+_COURTESY_OWNER = "app/core/routing/anchors.py"
+
+#: 每条正则取一段特征片段用来扫源码。片段是**字面量**（这里 `|` 只是普通字符，
+#: 不做正则解释），所以它必须是正则原文里**连续出现**的一段——写 `a|b|d` 去匹配
+#: `a|b|c|d` 是**匹配不到**的，护栏会恒真。
+#:
+#: 选片段的三个约束（都踩过）：
+#: ① 连续；② 别取 `[\s!！。.~～，,]*$` 这类多条共用的尾巴，否则扫出一片噪声；
+#: ③ **必须避开 ``app/core/sub_agents.py`` 里那组故意不同的宽松变体**——
+#: 那里是子串匹配、不锚定。所以带 `^` 的写法（如 `_BYE_RE`）天然只属于本处。
+_COURTESY_FINGERPRINTS = {
+    "_GREETING_RE": "好呀|好啊|好哇",
+    "_THANKS_RE": "多谢|感谢|非常感谢|辛苦了",
+    "_BYE_RE": "^(再见|拜拜|bye|goodbye|see you|先这样|回头聊|下次聊)",
+    "_IDENTITY_RE": "你能做什么|你能帮我做什么|你会什么",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_COURTESY_FINGERPRINTS))
+def test_courtesy_regex_is_defined_exactly_once(name):
+    """整句寒暄正则**只有一处定义**，就在层① 的 anchors.py，其余位置 import。
+
+    为什么判据是**文本扫描**，而不是 ``anchors.X is legacy_router.X``：
+    ``re.compile`` 自带内部缓存，同样的 pattern + flags 会返回**同一个对象**——
+    于是"是不是同一个对象"根本区分不了"import 过来"与"又抄了一份一模一样的"。
+    这恰是最容易漏网的那种回退：抄一份比 import 更顺手，而且**看不出来**。
+
+    断言 ``hits == [_COURTESY_OWNER]`` 而不是 ``len(hits) == 1``：
+    "恰好一个"与"恰好是那一个"是两件事（判据沿用
+    ``test_out_of_scope_answer_is_defined_once``）。
+
+    ⚠️ 反向验证：把 ``app/core/router_agent.py`` 里那份拷贝写回去，本条必须变红。
+    """
+    fingerprint = _COURTESY_FINGERPRINTS[name]
+    hits = [
+        path.relative_to(_REPO_ROOT).as_posix()
+        for path in (_REPO_ROOT / "app").rglob("*.py")
+        if fingerprint in path.read_text(encoding="utf-8")
+    ]
+    assert hits == [_COURTESY_OWNER], (
+        f"{name} 的短语表出现在 {hits}，应当只有 {_COURTESY_OWNER} 一处 —— "
+        "整句寒暄正则又变成多处定义了：两份会各自漂移，且漂移时**不报错**。"
+    )
 
 
 # ===========================================================================

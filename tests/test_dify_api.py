@@ -89,6 +89,175 @@ def test_correct_key_passes(_auth):
 
 
 # ---------------------------------------------------------------------------
+# 鉴权解析：**一条规则，两个入口**（曾经两套，且对制表符判定相反）
+# ---------------------------------------------------------------------------
+#: 一批 Authorization 头写法。**制表符那一条是关键**：入站中间件过去用
+#: ``startswith("bearer ")``（拒），Dify 端点用 ``split(None, 1)``（收），
+#: 同一个 token 走两个入口得到相反结论。
+_AUTH_HEADER_CASES = [
+    "Bearer test-key-123",
+    "bearer test-key-123",
+    "BEARER test-key-123",
+    "Bearer   test-key-123",      # 多个空格
+    "  Bearer test-key-123  ",    # 头两端有空白
+    "Bearer\ttest-key-123",       # ← 制表符
+    "Bearer",                      # 只有 scheme，没令牌
+    "Basic test-key-123",          # 别的 scheme
+    "",                            # 空头
+]
+
+
+def _middleware_request(headers: dict):
+    """造一个只带请求头的最小 Starlette 请求，用来直接驱动入站鉴权。
+
+    走 ``_check_auth`` 而不是 TestClient：后者要挑一个"必然存在、又不豁免鉴权、
+    还不会真跑业务逻辑"的路由，条件比被测代码还难维护。
+    """
+    from starlette.requests import Request
+
+    raw = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+    return Request({"type": "http", "method": "POST", "path": "/chat/ask", "headers": raw})
+
+
+@pytest.mark.parametrize("header", _AUTH_HEADER_CASES)
+def test_middleware_and_dify_reach_the_same_verdict(_auth, header, monkeypatch):
+    """两个入口对同一个 Authorization 头的结论必须一致（这里用**正确的令牌**）。
+
+    这是"解析又被抄了一份"的探测器：只要有人把 ``split(None, 1)`` 或
+    ``startswith("bearer ")`` 写回任一处，制表符那一格就会立刻分叉。
+    """
+    from app.api import dify
+    from app.main import _check_auth as middleware_check
+
+    monkeypatch.setattr(config, "AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "AUTH_API_KEY", _auth)
+
+    middleware_ok = middleware_check(_middleware_request({"Authorization": header})) is None
+    dify_ok = dify._check_auth(header) is None
+
+    assert middleware_ok == dify_ok, (
+        f"Authorization={header!r} 时两个入口结论相反："
+        f"中间件={'放行' if middleware_ok else '拒绝'}，"
+        f"Dify={'放行' if dify_ok else '拒绝'} —— 解析规则又变成两套了"
+    )
+
+
+def test_tab_is_not_a_valid_separator(_auth, monkeypatch):
+    """制表符不算合法分隔符，两个入口都要拒——取 RFC 6750 的严格一侧。
+
+    ``str.split()`` 按**任意空白**切，会把 ``"Bearer\\txxx"`` 也认成合法。
+    这条钉住"更严格"这个方向：哪天有人为了"兼容"把两边一起放宽，
+    本用例会红，逼他先想清楚放宽的代价。
+    """
+    from app.api import dify
+    from app.main import _check_auth as middleware_check
+
+    monkeypatch.setattr(config, "AUTH_ENABLED", True)
+    monkeypatch.setattr(config, "AUTH_API_KEY", _auth)
+
+    assert dify._check_auth(f"Bearer\t{_auth}") is not None, "Dify 端点不应用制表符分隔"
+    assert middleware_check(_middleware_request({"Authorization": f"Bearer\t{_auth}"})) is not None
+
+
+def test_middleware_prefers_x_api_key(_auth, monkeypatch):
+    """``X-API-Key`` 优先——这是**入站入口的策略**，不是解析规则，故留在 main.py。
+
+    两个入口共用的是"怎么解 Bearer"，不是"认哪些头"：Dify 端点的对外契约里
+    只有 ``Authorization``，多认一个头等于悄悄扩大它的攻击面。
+    """
+    from app.main import _extract_api_key
+
+    assert _extract_api_key(_middleware_request({"X-API-Key": "from-header"})) == "from-header"
+    assert _extract_api_key(_middleware_request({
+        "X-API-Key": "from-header", "Authorization": f"Bearer {_auth}",
+    })) == "from-header"
+
+
+def _looks_like_bearer_parsing(node) -> str:
+    """判断一个 AST 节点是不是"在解析 Authorization 头"。返回说明，不是则空串。
+
+    ⚠️ 判据必须**只认真正会执行的解析动作**，不能是"字符串里出现 bearer"：
+    本仓库里 ``'Bearer '`` 这种字面量还出现在别处且完全正当——
+    ``app/providers/embeddings.py`` 用它**拼出站请求头**（方向相反的一件事），
+    ``dify.py`` 用它拼错误文案，模块 docstring 里也写着这个词。
+    第一版判据就是"字符串包含 bearer"，一上来报了 7 处误报。
+    **护栏误报的下场是被关掉**，所以这里收紧到三种语法特征：
+
+    ① ``x.startswith("bearer…")`` —— 入站中间件原来的写法；
+    ② ``x.split(None, 1)`` —— Dify 端点原来的写法（按任意空白切）；
+    ③ ``re.match/compile/...("…bearer…")`` —— 改成正则也算重写了一份。
+    """
+    import ast
+
+    # ① / ②：方法调用
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        attr = node.func.attr
+        if attr == "startswith" and node.args:
+            arg = node.args[0]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                if "bearer" in arg.value.lower():
+                    return f'startswith({arg.value!r})'
+        if attr == "split" and len(node.args) == 2:
+            first, second = node.args
+            if (
+                isinstance(first, ast.Constant) and first.value is None
+                and isinstance(second, ast.Constant) and second.value == 1
+            ):
+                return "split(None, 1)"
+    # ③：正则里写 bearer
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"compile", "match", "search", "fullmatch"}
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and "bearer" in node.args[0].value.lower()
+    ):
+        return f"re.{node.func.attr}({node.args[0].value!r})"
+    return ""
+
+
+def test_bearer_parsing_lives_in_exactly_one_module():
+    """Bearer 的**解析**只许出现在 ``app/utils/auth_header.py``。
+
+    判据走 AST 而不是正则扫文本：本仓库里 main.py / dify.py 的注释**特意**写着
+    "这里曾经用 startswith('bearer ')/split(None, 1)"，正则会把说明文字当成违规。
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "app"
+    owner = "utils/auth_header.py"
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel == owner:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            why = _looks_like_bearer_parsing(node)
+            if why:
+                offenders.append(f"{rel}:{node.lineno} {why}")
+
+    # 兜底：本判据若哪天认不出东西，本用例会毫无意义地变绿 —— 那是"静默失效"，
+    # 正是这份文件存在的理由。所以先确认它确实能认出**已知的那两种写法**。
+    import ast as _ast
+
+    for probe, expect in [
+        ('x.lower().startswith("bearer ")', "startswith"),
+        ('h.split(None, 1)', "split"),
+    ]:
+        found = _looks_like_bearer_parsing(_ast.parse(probe).body[0].value)
+        assert expect in found, f"判据认不出已知写法 {probe!r}（得到 {found!r}）—— 本用例已失效"
+
+    assert offenders == [], (
+        "Bearer 解析在下面这些地方又出现了 —— 它只该有 app/utils/auth_header.py 一处：\n  "
+        + "\n  ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
 # 响应契约
 # ---------------------------------------------------------------------------
 def test_response_shape(_auth):

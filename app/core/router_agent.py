@@ -70,6 +70,13 @@ from app import config
 from app.core.llm_access import content_of, default_model
 from app.core.prompts import render as render_prompt
 from app.core.routing import match_intent
+from app.core.routing.anchors import (
+    _ANCHOR_MAX_CHARS,
+    _BYE_RE,
+    _GREETING_RE,
+    _IDENTITY_RE,
+    _THANKS_RE,
+)
 from app.core.routing.catalog import (
     DEFAULT_SCENE,
     OUT_OF_SCOPE_ANSWER,
@@ -111,20 +118,25 @@ __all__ = [
 # 门面保留 = 图拓扑、条件边、既有测试**一行不改**。
 # ---------------------------------------------------------------------------
 
-# 明显寒暄的**整句锚定**正则：宁可漏判（落到 simple_rag，L4 会诚实说没找到），
-# 不可错判（把业务问题当闲聊打发掉）。故一律要求 ^...$ 且长度受限——
-# 少了尾锚 `$`，「好像这个制度不太清楚」会被 `^你好` 的前缀匹配吞掉。
-_GREETING_RE = re.compile(
-    r"^(你|您)?(好|好呀|好啊|好哇|早|早上好|早安|中午好|下午好|晚上好)[\s!！。.~～，,]*$"
-    r"|^(hi|hello|hey|yo|哈喽|嗨|哈啰)[\s!！。.~～，,]*$",
-    re.I,
-)
-_THANKS_RE = re.compile(r"^(谢谢|多谢|感谢|非常感谢|辛苦了|thanks|thank you|thx|3q)[\s!！。.~～，,]*$", re.I)
-_BYE_RE = re.compile(r"^(再见|拜拜|bye|goodbye|see you|先这样|回头聊|下次聊)[\s!！。.~～，,]*$", re.I)
-_IDENTITY_RE = re.compile(r"^(你是谁|你是什么|你是做什么的|你叫什么|介绍一下你|你能做什么|你能帮我做什么|你会什么|你有什么功能)[\s?？!！。]*$", re.I)
-
+# ---------------------------------------------------------------------------
+# 寒暄 / 致谢 / 致别 / 身份的**整句锚定**正则 + 长度上限：
+# **定义处是 ``app/core/routing/anchors.py``**（层①「开口第一层」也用它），
+# 本模块在顶部 import，这里只剩门面（理由与上面的 SCENES 相同）。
+#
+# 原先此处另有一份**逐字相同**的拷贝，靠一条断言把两份钉在一起。它的失效方式是
+# 静默的：这里服务"模型失败后的兜底"，那里服务"开口第一层"，同一句话在两条
+# 路径上给出不同判断时不会报错，只表现为"有时像寒暄、有时又像业务问题"。
+#
+# 宁可漏判（落到 simple_rag，L4 会诚实说没找到），不可错判（把业务问题当闲聊
+# 打发掉）。故一律要求 ^...$ 且长度受限——少了尾锚 `$`，
+# 「好像这个制度不太清楚」会被 `^你好` 的前缀匹配吞掉。
+#
+# ⚠️ 别把 ``app/core/sub_agents.py`` 里那组同名正则也并过来：它们**故意不同**
+# （子串匹配、不锚定），回答的是"已经在闲聊了，挑哪句回复更像话"，
+# 与"要不要把这个句子划进闲聊"是两个问题。共用会让一方被另一方的约束绑住。
+# ---------------------------------------------------------------------------
 #: 确定性兜底只认「短句 + 整句匹配」，避免长句里夹着"你好"被误判。
-_FALLBACK_MAX_CHARS = 12
+_FALLBACK_MAX_CHARS = _ANCHOR_MAX_CHARS
 
 
 @dataclass
@@ -344,15 +356,37 @@ def _parse_route(raw: str):
     return scene, reason, min(max(confidence, 0.0), 1.0)
 
 
-def _format_history(chat_history: Optional[List[Dict[str, str]]], max_turns: int = 4) -> str:
-    """把历史压成若干行纯文本。**只取最近几轮**：路由只需消解代词。"""
-    lines: List[str] = []
-    for msg in (chat_history or [])[-max_turns * 2:]:
-        role = "用户" if (msg or {}).get("role") == "user" else "助手"
-        content = str((msg or {}).get("content") or "").strip().replace("\n", " ")
-        if content:
-            lines.append(f"{role}：{content[:200]}")
-    return "\n".join(lines) or "（无）"
+#: 喂给路由模型的历史轮数。
+#:
+#: 路由看历史**只为一件事**：消解代词与指代（「他的邮箱是多少」里的"他"）。
+#: 故刻意**比生成层少**——生成层按 ``config.SHORT_TERM_WINDOW`` 取，
+#: 路由只要够认出上文主语即可。两者不是同一个量，别顺手合并成同一个配置。
+_ROUTER_HISTORY_TURNS = 4
+
+
+def _format_history(
+    chat_history: Optional[List[Dict[str, str]]],
+    max_turns: int = _ROUTER_HISTORY_TURNS,
+) -> str:
+    """把历史压成若干行纯文本。**只取最近几轮**：路由只需消解代词。
+
+    ⚠️ 本函数**只做"取最近几轮"这一件事**，裁剪与格式化分别委托给唯一实现：
+    裁剪交给 :func:`app.memory.short_term.build_window`（项目里裁剪点只许有一处，
+    见其 docstring 记的那次事故），格式化交给
+    :func:`app.memory.short_term.format_history`。
+
+    这里曾经是一份**独立实现**：自己切片、自己拼行、还顺手加了每行 200 字的截断。
+    它与 ``short_term`` 那份的差别只在"截断点不同"，于是同一条历史在两处得到
+    不同文本——路由与生成看到的历史不一致时**不会报错**，只表现为代词偶尔消解错。
+
+    import 写在函数体内，与 ``app.rag.generator._format_history`` 一致：
+    这样 ``tests/test_short_term_symmetry.py`` 才有办法**观测**"确实走了那一份"
+    （打在模块属性上的替身，只有模块内每轮重新取名字才拦得住）。
+    """
+    from app.memory.short_term import build_window, format_history
+
+    window = build_window(chat_history or [], max_turns=max_turns)
+    return format_history(window)
 
 
 # ---------------------------------------------------------------------------

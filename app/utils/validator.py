@@ -10,11 +10,23 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from app import config
+
 # ------------------------------------------------------------
 # 校验规则常量
 # ------------------------------------------------------------
 MAX_QUERY_LENGTH = 2000
-MAX_DOC_CONTENT = 50_000
+
+#: 单篇文档内容长度上限。**数字的唯一来源是 :data:`app.config.MAX_DOC_CONTENT_CHARS`。**
+#:
+#: 这里原先硬编码 ``50_000``，与 config 那份是两个数字：改一处忘一处时，
+#: 两个上传入口会对同一份文档给出**不同**的结果，而且两边都不报错。
+#:
+#: ⚠️ 数字统一了，**语义并没有统一，也不该统一**：
+#: 本模块服务的是 JSON 接口（调用方是程序）→ 超限**拒收**，它能改；
+#: 文件上传接口（调用方是人）→ 超限**截断**并回 ``truncated``，报错等于整篇不收。
+#: 详见 config 里该配置项上的说明。
+MAX_DOC_CONTENT = config.MAX_DOC_CONTENT_CHARS
 
 FORBIDDEN_PATTERNS: List[re.Pattern] = [
     re.compile(r"<script.*?>", re.IGNORECASE),

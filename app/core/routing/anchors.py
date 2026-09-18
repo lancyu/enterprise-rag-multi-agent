@@ -28,13 +28,20 @@
 提升为"开口第一层"，其余越界**仍交层④ 仲裁**。
 **合规拦截不因为"能做成确定性的"而放松，只因为"误伤概率够低"而提前。**
 
-为什么这些正则在本模块**复制**了一份（临时安排，Phase 2 消失）
-------------------------------------------------------------
-:mod:`app.core.router_agent` 定义着同样 4 条正则，但它未来要反过来 import 本包
-（router_agent 降级为门面），本包若 import 它就会形成环。Phase 0 的处理是：
-**anchors.py 作为权威来源，router_agent 暂时保留原样**，中间用
-``tests/test_routing_funnel.py`` 里的一条断言把两份**逐字**钉在一起——
-谁先漂移谁立刻变红。Phase 2 让 router_agent 改为 re-export，第二处来源随之删除。
+为什么这些正则在**本模块是唯一实现处**
+--------------------------------------
+:mod:`app.core.router_agent` 也用同样这 4 条正则。历史上它们被**各写了一份**
+（逐字相同），原注释写着「与 router_agent 逐字一致」——那是用注释记录重复，
+而不是消除它；过渡期还靠 ``tests/test_routing_funnel.py`` 的一条断言把两份钉在一起。
+
+现已是最终结构：**定义只在本模块，router_agent 反向 import 这里**。
+方向不能倒过来——router_agent 依赖本包（``from app.core.routing import match_intent``），
+本包若 import 它就会成环。限制上限的 ``_ANCHOR_MAX_CHARS`` 同理。
+
+⚠️ 别顺手把 ``app/core/sub_agents.py`` 里那组同名正则也并进来：它们**故意不同**
+（子串匹配、不锚定）。那边回答的是"已经在闲聊了，挑哪句回复更像话"，
+这里回答的是"要不要把这个句子划进闲聊"。前者宽松只影响措辞，
+后者错判会把业务问题打发掉。共用会让一方被另一方的约束绑住。
 
 ⚠️ **锚点先于 guard 生效**，且这个顺序**写死在漏斗里，不做成可配置项**。
 两类判据的证据强度不同：锚点要求"属性词处于**被索取位置**"（结构约束），
@@ -58,7 +65,7 @@ from app.core.routing.catalog import (
 from app.core.routing.vocabulary import Vocabulary
 
 # ---------------------------------------------------------------------------
-# 整句锚定正则（与 router_agent.py:107-117 逐字一致，见模块 docstring）
+# 整句锚定正则 —— **唯一实现处**，router_agent 从这里 import（见模块 docstring）
 #
 # 一律要求 ``^...$`` 且长度受限——少了尾锚 ``$``，
 # 「好像这个制度不太清楚」会被 ``^你好`` 的前缀匹配吞掉。
@@ -76,9 +83,9 @@ _IDENTITY_RE = re.compile(
     re.I,
 )
 
-#: 寒暄只认「短句 + 整句匹配」，避免长句里夹着"你好"被误判。
-#: 值与原实现的 ``router_agent._FALLBACK_MAX_CHARS`` 一致。
-_MAX_CHARS = 12
+#: 寒暄 / 身份只认「短句 + 整句匹配」，避免长句里夹着"你好"被误判。
+#: router_agent 的确定性兜底复用同一个上限（它原先把 12 又硬编码了一遍）。
+_ANCHOR_MAX_CHARS = 12
 
 # ---------------------------------------------------------------------------
 # 组合寒暄
@@ -179,7 +186,7 @@ def _anchor_courtesy(text: str, vocab: Vocabulary) -> Optional[AnchorHit]:
     ② 是为了救「谢谢，辛苦了」这类**连说两句**的常见写法：① 要求整句恰好
     等于一个短语，于是它含"谢谢"也含"辛苦了"，却因为中间一个逗号而漏判。
     """
-    if len(text) > _MAX_CHARS:
+    if len(text) > _ANCHOR_MAX_CHARS:
         return None
     if _GREETING_RE.match(text) or _THANKS_RE.match(text) or _BYE_RE.match(text):
         return AnchorHit(SCENE_SMALLTALK, None, "整句寒暄/致谢/致别")
@@ -190,7 +197,7 @@ def _anchor_courtesy(text: str, vocab: Vocabulary) -> Optional[AnchorHit]:
 
 def _anchor_identity(text: str, vocab: Vocabulary) -> Optional[AnchorHit]:
     """整句身份询问 → ``smalltalk``。（判据与领域无关，故用不到词表。）"""
-    if len(text) > _MAX_CHARS:
+    if len(text) > _ANCHOR_MAX_CHARS:
         return None
     if _IDENTITY_RE.match(text):
         return AnchorHit(SCENE_SMALLTALK, None, "整句身份询问")

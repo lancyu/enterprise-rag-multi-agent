@@ -10,6 +10,8 @@
 2. **对象有真实消费点**：恢复的 ``ShortTermMemory`` 必须被生产代码使用，
    否则又会长成新的死代码（这正是它上一版的下场）；
 3. **不重复 I/O**：``history`` 由构造注入，对象自己不读 Redis。
+4. **裁剪点与格式化各只有一份**：``build_window`` 负责裁、``format_history`` 负责写，
+   生成层与路由层都只是消费者（第 4 节）。
 """
 
 from __future__ import annotations
@@ -181,7 +183,7 @@ def test_window_is_property_not_method() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. 格式化实现只有一份（曾经两份并存且逐字相同）
+# 4. 格式化实现只有一份（曾经三份并存：memory / generator / router_agent）
 # ---------------------------------------------------------------------------
 def test_format_history_does_not_crop() -> None:
     """format_history 只格式化，绝不再裁一刀。
@@ -219,3 +221,64 @@ def test_two_formatter_outputs_are_identical() -> None:
     history = _history(5)
     assert generator._format_history(history) == memory_pkg.format_history(history)
     assert memory_pkg.format_history([]) == "（无历史对话）"
+
+
+# ---------------------------------------------------------------------------
+# 4b. 路由层也是同一份（曾经是**第三份**独立实现，见下）
+# ---------------------------------------------------------------------------
+def test_router_delegates_to_memory_formatter(monkeypatch) -> None:
+    """路由看历史用的也是同一份格式化实现，只是**取得更少轮数**。
+
+    路由只为一件事看历史：消解代词（「他的邮箱是多少」里的"他"）。
+    所以它该做的是"少取几轮"，而不是"另写一套拼行逻辑"。
+    """
+    from app.core import router_agent
+
+    calls: List[int] = []
+    original = short_term_mod.format_history
+
+    def spy(history):
+        calls.append(len(history))
+        return original(history)
+
+    monkeypatch.setattr(short_term_mod, "format_history", spy)
+    text = router_agent._format_history(_history(10))
+
+    assert calls == [8], f"路由未走 memory 的格式化实现：{calls}"
+    assert "第 9 个问题" in text, "路由应当能看到最近一轮"
+    assert "第 0 个问题" not in text, "路由只该取最近 4 轮（_ROUTER_HISTORY_TURNS）"
+
+
+def test_router_and_generator_see_the_same_text() -> None:
+    """同一条历史，路由与生成拿到的**文本逐字相同**。
+
+    这条是"格式化第二处实现"的探测器：谁在路由里另写一份拼行逻辑，
+    换行方式、角色前缀、空历史哨兵里的任何一个就会对不上。
+
+    ⚠️ 样本必须**含长消息与内嵌换行**，否则本条测不出东西：
+    两份实现的分歧点正是"每行截断 200 字"与"把换行压成空格"。
+    拿几条短句去比，两份实现的输出会**恰好相同**，护栏恒真——
+    这不是假设，是本用例第一版真实发生过的（把修复退回时它没变红）。
+    """
+    from app.core import router_agent
+    from app.rag import generator
+
+    history = [
+        {"role": "user", "content": "长" * 300},
+        {"role": "assistant", "content": "第一行\n第二行"},
+        {"role": "user", "content": "短句"},
+        {"role": "assistant", "content": "答"},
+    ]
+    assert router_agent._format_history(history) == generator._format_history(history)
+
+
+def test_empty_history_sentinel_has_one_source() -> None:
+    """空历史的哨兵文案也只有一个来源。
+
+    曾经是「（无）」（路由那份）与「（无历史对话）」（memory 那份）两种写法——
+    两份实现的最早裂缝就是从这种"无关紧要的小字"开始的。
+    """
+    from app.core import router_agent
+
+    assert router_agent._format_history([]) == memory_pkg.format_history([])
+    assert router_agent._format_history(None) == memory_pkg.format_history([])

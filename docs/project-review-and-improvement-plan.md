@@ -72,11 +72,11 @@ langgraph-enterprise-bot/
 
 | 文件 | 行数 | 混在一起的职责 | 证据 |
 |---|---|---|---|
-| `app/api/chat.py` | 444 | HTTP 端点 + 响应体契约 + 业务编排（invoke 图）+ 持久化 + 记忆整理 + 日志 | `chat_ask` 一个函数里同时出现 `@router.post`、`create_initial_state`、`enterprise_workflow.invoke`、`save_message`、`maybe_consolidate` |
-| `app/core/tool_agent.py` | 712 | 提示词 + **手写 JSON 大括号配对扫描器** + 工具 schema 校验 + 多轮决策循环 + 文本形态回捞 + 护栏 | `_iter_json_objects`、`parse_text_tool_calls`、`execute_tool_calls`、`_decide` |
+| `app/api/chat.py` | 461 | HTTP 端点 + 响应体契约 + 业务编排（invoke 图）+ 持久化 + 记忆整理 + 日志 | `chat_ask` 一个函数里同时出现 `@router.post`、`create_initial_state`、`enterprise_workflow.invoke`、`save_message`、`maybe_consolidate` |
+| `app/core/tool_agent.py` | 694 | 提示词 + **手写 JSON 大括号配对扫描器** + 工具 schema 校验 + 多轮决策循环 + 文本形态回捞 + 护栏 | `_iter_json_objects`、`parse_text_tool_calls`、`execute_tool_calls`、`_decide` |
 | `app/db/vector_db.py` | 667 | 3 个后端实现 + 原子文件写 + 进程内索引 + **工厂降级决策** + Milvus 代理网络诊断 | `MemoryVectorStore` / `ChromaVectorStore` / `MilvusVectorStore` / `_loopback_proxy_hint` |
 | `app/core/self_check.py` | 347 | 自检框架（**三份名字集合**）+ 9 项检查 + 直接 SQL + **硬编码业务探针问句** | `FAST_ITEMS` / `DEEP_ITEMS` / `_collect_checks` 三处各写一遍清单；`_check_retrieval` 里硬编码 `"年假有多少天"` |
-| `app/api/dify.py` | 370 | HTTP + **另一套 Bearer 鉴权** + 分数归一化数学 + metadata 白名单 + **10 个运算符的条件过滤引擎** + **75 行手写 OpenAPI** | `_check_auth`、`_normalize_score`、`_match_conditions`、`dify_openapi` |
+| `app/api/dify.py` | 376 | HTTP + **另一套 Bearer 鉴权** + 分数归一化数学 + metadata 白名单 + **10 个运算符的条件过滤引擎** + **75 行手写 OpenAPI** | `_check_auth`、`_normalize_score`、`_match_conditions`、`dify_openapi` |
 
 **反例（职责单一，可作为其他模块的样板）**：`app/graph/edges.py`(95)、`app/core/routing/similarity.py`(138)、`app/rag/reorder.py`(28)、`app/utils/logger.py`(74)。
 
@@ -92,7 +92,7 @@ langgraph-enterprise-bot/
 | **D-3** | RRF 归一化上界公式 `(w_d+w_l)/(k+1)` | **2 处，各算一遍** | `app/api/dify.py:85` / `app/rag/generator.py:164` | 中 |
 | **D-4** | 中文分词与字符集 | **3 套风格** | `lexical.py` / `retriever.py`（剔虚词）vs `app/providers/embeddings.py:30`（不剔）；汉字区间还有 `一-鿿` 与 `\u4e00-\u9fff` 两种写法 | 中 |
 | **D-5** | `_content_of(message)` + `_default_model()` | **各 4 份，函数体 sha1 完全相同** | `app/core/tool_agent.py:693` / `app/core/sub_agents.py:336` / `app/core/router_agent.py:357` / `app/core/routing/arbitration.py:180` | **高** |
-| **D-6** | 问候/致谢/告别正则 | **3 份，且已漂移** | `router_agent.py:116` 与 `anchors.py:66` 是**整句锚定** `^...$`；`sub_agents.py:115` 的同类正则**去掉了锚定**（变成子串匹配） | **高** |
+| **D-6** | 问候/致谢/告别正则 + 长度上限 12 | **2 份逐字相同** | `router_agent._GREETING_RE/_THANKS_RE/_BYE_RE/_IDENTITY_RE` 与 `anchors` 里的同名四条逐字一致（`anchors` 的注释自己写着「与 router_agent.py 逐字一致」），`_FALLBACK_MAX_CHARS` 与 `_MAX_CHARS` 也各写一遍 | 中 |
 | **D-7** | `_format_history` | 3 处，默认值不同 | `app/memory/short_term.py:64`（唯一实现）/ `generator.py:191`（已收敛为委托 ✅）/ `router_agent.py:346`（**仍是独立实现**，且自带魔数 `max_turns=4`） | 中 |
 | **D-8** | 配置布尔解析 | **1 个函数 + 8 处内联** | `_env_bool`（`app/config.py:25`，**把 `"none"` 当假**）vs 内联版（`config.py:67,85,99,428,440,462,474,482`，**不认 `none`**） | **高** |
 | **D-9** | 取文件名（basename） | **8 处** | 只有 `prepare.py:112` 与 `generator.py:126` 处理 `\`；`retriever.py:490`、`evaluator.py:171`、`chat.py:92`、`dify.py:127/245`、`knowledge.py:156` 都不处理 | 中 |
@@ -101,9 +101,18 @@ langgraph-enterprise-bot/
 | **D-12** | 健康检查端点 | 2 个，鉴权豁免不一致 | `GET /health`（在 `AUTH_EXEMPT_PATHS` 内）vs `GET /test/health`（**不在**） | 低 |
 | **D-13** | 魔数 `min(len(history)//2 + 1, 10)` | 2 处 | `app/api/chat.py:240` 与 `app/api/chat.py:403`，无命名常量 | 低 |
 
-**为什么 D-6 / D-8 / D-10 / D-11 标「高」**：它们不只是重复，而是**两份副本的行为已经不同**。
-同一句「谢谢」在两处判得不一样、`MEMORY_ENABLED=none` 与 `CHUNK_CONTEXT_HEADER=none` 结果相反——
+**为什么 D-8 / D-10 / D-11 标「高」**：它们不只是重复，而是**两份副本的行为已经不同**。
+`MEMORY_ENABLED=none` 与 `CHUNK_CONTEXT_HEADER=none` 结果相反、同一份文档走两个上传
+入口一个拒收一个截断、同一句「谢谢」/同一个 token 在两条路径上判定相反——
 这类问题**不会报错，只会让行为随机地取决于走了哪条代码路径**，与项目历史上踩过的坑同型。
+（D-11 的相反判定已在修复时**实测确认**：`"Bearer\txxx"` 在 Dify 端点放行、在入站中间件 401。）
+
+> **⚠️ 本表的一处自我订正（2026-09-18）**：D-6 原先把 ``app/core/sub_agents.py`` 那组同名正则
+> 也算作重复，**这是错的**。该模块 112-115 行自己写明「与路由 Agent 的兜底正则不是同一件事」：
+> 那边回答"已经在闲聊了，挑哪句回复更像话"（宽松无害），这边回答"要不要把这个句子划进闲聊"
+> （错判会把业务问题打发掉）。**有意的偏离不该被写成缺陷**——真正的重复是
+> `router_agent` ↔ `anchors` 那一对（逐字相同）。修 D-6 时只收敛了这一对，
+> 并在 `sub_agents` 处补了一句"别顺手并过去"。
 
 ---
 
@@ -371,6 +380,26 @@ app/tools → db                                                          ← �
 | **第 2 批** | P0-1 ~ P0-4（重复收敛、异常口径、PDF 对齐、trace 脱敏） | 都是一次性、可验收、不带设计争议的修复 |
 | **第 3 批** | P1-2 分层契约 → P1-3 rerank → P1-4 检索指标 → P1-5 增量对账 → P1-6 解环 | 前一条为后一条提供验证手段（没有指标就做不了 rerank 的 A/B） |
 | **随时** | P2-* | 结构整理与体验优化，可穿插进行 |
+
+### 执行进度（2026-09-18 起追加）
+
+> 本节是**唯一**会随执行更新的部分；上面的条目正文保持在审查时点的原样，
+> 便于回看"当时看到的是什么"。
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| P0-1 | ✅ 已完成 | 13 类重复实现全部收敛为"唯一实现 + 其余委托"。4 类行为漂移按**更严格的一侧**钉住，每项都补了**反向验证过**的护栏（把修复退回 → 对应用例变红，已逐项实测）。新增两处实现 `app/utils/text.py`、`app/core/llm_access.py`、`app/utils/auth_header.py` |
+| P0-2 | 🔜 进行中 | |
+| P0-3 | ⏳ 待做 | |
+| P0-4 | ⏳ 待做 | |
+| P1-1 | ⚠️ **方向已订正** | 原写"建 CI"，与本仓库 2026-09-14 的**既定决定**（本仓库不开源，不重建 `.github/`、不建 pre-commit）直接冲突。改为**本地一键门禁**：把行号校验器纳入 pytest（四道 → 三道），单独脚本承载配置分区表那一类 |
+| P1-2 ~ P1-6 | ⏳ 待做 | 第 3 批 |
+| P0-5 / P1-7 | ⏳ 待做 | 第 1 批遗留 |
+
+**顺手记下的一个工具缺口**（修 P0-1 时踩到）：`scripts/fix_doc_linenos.py`
+**处理不了 config 分区表**（校验器第 13 类）。那张表 25 行会随 `app/config.py` 的
+任何增删整体错位，而回填脚本对它零覆盖 —— 每次只能按校验器的报错**手工整表重写**。
+这是"校验器能查、修不了"的孤例，值得给它补一段回填逻辑。
 
 ---
 

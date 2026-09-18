@@ -1,5 +1,4 @@
 """FastAPI 入口 —— 生命周期管理、路由注册、静态面板与启动自检。"""
-import secrets
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -16,6 +15,7 @@ from app.core.rate_limit import check_rate_limit
 from app.core.self_check import get_health, run_self_check
 from app.core.tracing import get_trace_id, new_trace_id, set_trace_id
 from app.db.redis_db import close_redis, get_redis
+from app.utils.auth_header import api_key_matches, bearer_token
 from app.utils.logger import logger
 
 _startup_report: dict = {}
@@ -109,14 +109,19 @@ app.add_middleware(
 
 
 def _extract_api_key(request: Request) -> str:
-    """从 X-API-Key 或 Authorization: Bearer 中提取密钥。"""
+    """从 X-API-Key 或 Authorization: Bearer 中提取密钥。
+
+    **解析与比较都委托 :mod:`app.utils.auth_header`**（全项目唯一实现处）。
+    ``X-API-Key`` 优先是**本入口的策略**，不是解析规则，故留在本地：
+    Dify 兼容端点只读 Authorization（那是它的对外契约），两者共用的是"怎么解"。
+
+    这里曾经自己写 ``startswith("bearer ")``，而 Dify 端点写 ``split(None, 1)``——
+    后者按任意空白切，于是 ``"Bearer\\txxx"`` 在两条入口上一个放行、一个 401。
+    """
     provided = request.headers.get("X-API-Key", "").strip()
     if provided:
         return provided
-    auth = request.headers.get("Authorization", "").strip()
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-    return ""
+    return bearer_token(request.headers.get("Authorization"))
 
 
 def _check_auth(request: Request) -> Optional[JSONResponse]:
@@ -132,8 +137,9 @@ def _check_auth(request: Request) -> Optional[JSONResponse]:
     if path.startswith("/static") or path in config.AUTH_EXEMPT_PATHS:
         return None
 
-    provided = _extract_api_key(request)
-    if not config.AUTH_API_KEY or not secrets.compare_digest(provided, config.AUTH_API_KEY):
+    # fail-closed（"配了鉴权但没配密钥 → 一律拒绝"）写在 api_key_matches 里，
+    # 不在这里再判一次：两处各判一遍时，漏掉任何一处都只会**静默放宽**。
+    if not api_key_matches(_extract_api_key(request), config.AUTH_API_KEY):
         logger.warning(
             "鉴权失败：%s %s（来源 %s）",
             request.method, path,
