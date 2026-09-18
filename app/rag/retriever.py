@@ -441,12 +441,15 @@ def retrieve(
     # 来源白名单：剔除无权限访问的片段（按来源/部门做知识隔离）。
     ordered_docs = filter_by_allowed_sources(ordered_docs, allowed_sources)
 
-    # 可选 rerank 精排（默认关闭）：cross-encoder 对 top-N 候选二次评分重排。
+    # 可选 rerank 精排（默认关闭）：cross-encoder 对候选二次评分重排。
     # 只改顺序 + 附 rerank_score，不改 fused——置信度仍基于原始 RRF 分，保持跨模型可比。
     if config.RERANK_ENABLED:
         from app.rag.rerank import rerank_docs
 
-        ordered_docs = rerank_docs(query, ordered_docs, top_n=config.RERANK_TOP_N)
+        # ③ 候选窗口必须**覆盖**最终返回的条数，否则「排序」里会混进未精排的片段。
+        ordered_docs = rerank_docs(
+            query, ordered_docs, top_n=config.effective_rerank_candidates(top_k)
+        )
 
     results = ordered_docs[:top_k]
 

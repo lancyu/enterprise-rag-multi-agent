@@ -448,8 +448,28 @@ LEXICAL_BM25_B: float = float(_env("LEXICAL_BM25_B", "0.75"))
 RERANK_ENABLED: bool = _env_bool("RERANK_ENABLED", False)
 # 中文场景常用 BGE 系列重排模型（也支持任意 sentence-transformers 兼容 cross-encoder）
 RERANK_MODEL: str = os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
-# 参与精排的候选条数：先粗召回 Top-N 交给 cross-encoder，精排后再截 Top-K
-RERANK_TOP_N: int = int(_env("RERANK_TOP_N", "10"))
+# 精排服务：默认复用 embedding 的 Key 与地址调 `/rerank`（与 embedding 复用 LLM 配置同一套路）；
+# 两者都没配时才回退到本地 sentence-transformers（本机**未安装**该依赖，故实际等于不精排）。
+RERANK_API_KEY: str = os.getenv("RERANK_API_KEY", "") or EMBEDDING_API_KEY
+RERANK_BASE_URL: str = os.getenv("RERANK_BASE_URL", "") or EMBEDDING_BASE_URL
+RERANK_TIMEOUT: int = int(_env("RERANK_TIMEOUT", "10"))
+# 参与精排的候选条数：先取粗召回的前 N 条交给 cross-encoder，精排后再截 Top-K。
+#: 默认 64：cross-encoder 的耗时与候选数线性相关，但**候选窗口太小会让精排名不副实**
+#: —— 见 `effective_rerank_candidates` 的不变量说明。
+RERANK_CANDIDATES: int = int(_env("RERANK_CANDIDATES", "64"))
+
+
+def effective_rerank_candidates(top_k: int) -> int:
+    """实际参与精排的候选条数 —— **不得小于最终返回的条数**。
+
+    为什么这是不变量而不是"建议"：若候选窗口 < Top-K，那么落在窗口之外的片段
+    会以**未经精排的原始 RRF 顺序**出现在最终结果里。用户拿到的是一个"部分精排"
+    的列表，而离线指标（NDCG）会把这部分噪声一并算在精排头上 ——
+    于是 A/B 的结论既不能证明精排有用，也不能证明它没用。
+
+    宁可多花一点算力，也不能让"精排"这个说法名不副实。
+    """
+    return max(RERANK_CANDIDATES, top_k)
 
 # ============================================================
 # 可观测性接入（LangSmith，可选，见 app/core/observability.py）
@@ -761,6 +781,9 @@ def dump_config() -> dict:
             "chunk_overlap": CHUNK_OVERLAP,
             "rerank_enabled": RERANK_ENABLED,
             "rerank_model": RERANK_MODEL if RERANK_ENABLED else None,
+            # 报实际生效值（受 Top-K 抬升过），而不是配置原值 —— 否则「配了 10、
+            # 实际用 20」这类差异在排查时完全没有线索。
+            "rerank_candidates": effective_rerank_candidates(SIMILARITY_TOP_K),
         },
         "observability": {
             "langsmith_enabled": bool(LANGSMITH_ENABLED and LANGSMITH_API_KEY),

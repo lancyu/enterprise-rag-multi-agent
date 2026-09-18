@@ -45,7 +45,7 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **16595 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **16716 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | **9 个节点 + 3 条条件边** |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
@@ -75,7 +75,7 @@
 │                  app/utils/          加载 / 缓存 / 校验 / 日志  │
 └─────────────────────────────────────────────────────────────┘
                           ▲
-                          │ 全局配置：app/config.py（789 行）
+                          │ 全局配置：app/config.py（812 行）
                           │ 贯穿所有层：app/core/tracing.py（全链路 span 树）
 ```
 
@@ -119,7 +119,7 @@
 | **L1** | 数据准备 | `app/rag/prepare.py` | 207 | 把原始文件清洗成"干净语料" |
 | **L1.5** | 结构解析 | `app/rag/structure.py` | 334 | 看懂文档的章节层级 |
 | **L2** | 索引构建 | `app/rag/indexer.py` | 595 | 切片 + 向量化 + 入库 |
-| **L3** | 检索优化 | `app/rag/retriever.py` | 510 | 多路召回 + 融合 + 过滤 |
+| **L3** | 检索优化 | `app/rag/retriever.py` | 513 | 多路召回 + 融合 + 过滤 |
 | **L4** | 生成控制 | `app/rag/generator.py` | 403 | 带引用地作答，或礼貌拒答 |
 | **L5** | 评估迭代 | `app/rag/evaluator.py` | 384 | 量化效果，回流调参 |
 
@@ -190,7 +190,7 @@
 |---|---|---|
 | `app/__init__.py` | 1 | 包声明 |
 | `app/main.py` | **1-240** | 应用装配：lifespan、中间件、路由注册、全局异常 |
-| `app/config.py` | **1-789** | 全局配置中心（所有环境变量集中于此） |
+| `app/config.py` | **1-812** | 全局配置中心（所有环境变量集中于此） |
 | `app/runtime_flags.py` | **1-66** | **零依赖**运行时标志位：provider → config 的**单向**事实通道（见 §4.1 末尾） |
 
 ### 3.2 `app/api/` — HTTP 接口层（1537 行）
@@ -258,7 +258,7 @@
 | `errors.py` | **1-72** | 统一异常基类 + 对外故障文案的唯一构造处 |
 | `llm_factory.py` | **1-23** | 向后兼容壳（实现已迁至 `providers/llm.py`） |
 
-### 3.5 `app/rag/` — RAG 五层（2934 行）
+### 3.5 `app/rag/` — RAG 五层（2937 行）
 
 | 文件 | 行号范围 | 层 | 职责 |
 |---|---|---|---|
@@ -266,7 +266,7 @@
 | `structure.py` | **1-334** | L1.5 | 章节层级识别与按节切块 |
 | `indexer.py` | **1-595** | L2 | 切片 / 向量化 / 幂等入库 |
 | `lexical.py` | **1-258** | L3 | 自研 BM25 倒排索引 |
-| `retriever.py` | **1-510** | L3 | 多路召回 / RRF 融合 / 软回退 |
+| `retriever.py` | **1-513** | L3 | 多路召回 / RRF 融合 / 软回退 |
 | `rerank.py` | **1-8** | L3 | 兼容壳（实现已迁至 `providers/rerank.py`） |
 | `reorder.py` | **1-28** | L3 | 缓解"迷失在中间"的片段重排 |
 | `parent_store.py` | **1-139** | L2/L3 | 父块旁路存储（small-to-big） |
@@ -274,13 +274,13 @@
 | `evaluator.py` | **1-384** | L5 | 命中率 / MRR / 忠实度 / 反馈 |
 | `__init__.py` | **1-68** | — | 统一出口（纯 re-export） |
 
-### 3.6 `app/providers/` — 模型能力层（796 行）
+### 3.6 `app/providers/` — 模型能力层（891 行）
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
 | `llm.py` | **1-285** | 大模型工厂 + 限流退避 + 流式策略 |
 | `embeddings.py` | **1-305** | 向量化：本地哈希 / 远程 API / 带缓存代理 |
-| `rerank.py` | **1-102** | cross-encoder 精排（默认关） |
+| `rerank.py` | **1-197** | cross-encoder 精排（默认关） |
 | `__init__.py` | **1-55** | 统一出口 |
 | `base.py` | **1-49** | `Embedder` / `Reranker` 抽象接口 |
 
@@ -361,7 +361,7 @@
 `AUTH_EXEMPT_PATHS` 里的 Dify 接口有自己的 Key 校验，所以两条鉴权链**不能互相替代**。
 CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"本地能跑、上线跨域全挂"，代码里已自动关闭凭据。
 
-#### 📍 `app/config.py`（1-789）
+#### 📍 `app/config.py`（1-812）
 
 配置分区（按行号）：
 
@@ -380,18 +380,18 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 | 376-409 | 对话与检索参数（`effective_score_threshold` 394-401、`effective_fallback_min` 404-408） |
 | 410-434 | 融合权重与阈值 |
 | 435-441 | 词面倒排索引配置（BM25） |
-| 442-453 | Rerank 精排 |
-| 454-474 | 可观测性接入（LangSmith 445-455 + **trace 脱敏** 457-465） |
-| 475-480 | Embedding 缓存配置 |
-| 481-485 | 入站限流配置 |
-| 486-517 | 记忆系统配置（短期记忆 + 长期记忆） |
-| 518-524 | 切片策略（基础：分片大小 + 重叠） |
-| 525-604 | 切片策略（配置化 + 策略可替换） |
-| 605-625 | PDF 图片抽取 |
-| 626-663 | Dify 兼容接口 |
-| 664-685 | 入站鉴权（fail-closed） |
-| 686-716 | 来源访问控制 ACL（`_parse_source_acl` 699-712） |
-| 717-789 | 服务配置 + `mask_secret` 725-731 + `dump_config` 734-789 |
+| 442-473 | Rerank 精排 |
+| 474-494 | 可观测性接入（LangSmith 445-455 + **trace 脱敏** 457-465） |
+| 495-500 | Embedding 缓存配置 |
+| 501-505 | 入站限流配置 |
+| 506-537 | 记忆系统配置（短期记忆 + 长期记忆） |
+| 538-544 | 切片策略（基础：分片大小 + 重叠） |
+| 545-624 | 切片策略（配置化 + 策略可替换） |
+| 625-645 | PDF 图片抽取 |
+| 646-683 | Dify 兼容接口 |
+| 684-705 | 入站鉴权（fail-closed） |
+| 706-736 | 来源访问控制 ACL（`_parse_source_acl` 719-732） |
+| 737-812 | 服务配置 + `mask_secret` 745-751 + `dump_config` 754-812 |
 
 > ⚠️ **这张表是"整表错位"的高危区。**它以前只被校验器保护了一半，现在两半都保护了。
 >
@@ -1177,7 +1177,7 @@ IDF = log(1 + (N - df + 0.5) / (df + 0.5))
 **设计取舍**：`avg_len` 曾经用 `@property` 每次打分都重算全量平均，
 整体退化成 O(N²)。现在改成增删时缓存、打分时 O(1) 读取。
 
-#### 📍 L3 `retriever.py`（1-510）—— 混合召回与 RRF
+#### 📍 L3 `retriever.py`（1-513）—— 混合召回与 RRF
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
@@ -1186,12 +1186,12 @@ IDF = log(1 + (N - df + 0.5) / (df + 0.5))
 | `rrf_fuse` | 156-178 | **RRF 融合** |
 | `filter_by_allowed_sources` | 184-208 | 按权限过滤 |
 | `_attach_parent_content` | 225-247 | 父块回捞 |
-| `retrieve` | 250-492 | **主入口** |
+| `retrieve` | 250-495 | **主入口** |
 | ├ `_dense_recall` | 299-322 | 向量召回 |
 | ├ `_lexical_recall` | 325-327 | 词面召回 |
 | └ `_rewrite_recall` | 329-343 | 改写召回 |
-| `search` | 495-497 |
-| `retrieval_stats` | 500-510 |
+| `search` | 498-500 |
+| `retrieval_stats` | 503-513 |
 
 **实现原理（小白版）—— 混合召回**：
 
@@ -1452,7 +1452,7 @@ IDF 表在全量建索引时训练一次并持久化，查询时复用同一套�
 注意 `get_embedding_mode()` 返回的是**实际初始化成功**的模式，不是配置值——
 这样运维能一眼看出当前真正在用哪个。
 
-#### 📍 `app/providers/rerank.py`（1-102）—— 精排
+#### 📍 `app/providers/rerank.py`（1-197）—— 精排
 
 cross-encoder 是"把问题和文档**放在一起**过一遍模型"打分，
 比双塔式的向量相似度准，但慢得多（每对都要跑一次模型），
@@ -2157,7 +2157,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（16595 行）**
+**应用代码 `app/`（16716 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -2166,7 +2166,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `api/evaluation.py` | 81 | `api/knowledge.py` | 182 |
 | `api/memory.py` | 134 | `api/routing.py` | 110 |
 | `api/test.py` | 33 | `api/workflow.py` | 152 |
-| `config.py` | 789 | `core/__init__.py` | 1 |
+| `config.py` | 812 | `core/__init__.py` | 1 |
 | `core/errors.py` | 72 | `core/llm_factory.py` | 23 |
 | `core/observability.py` | 39 | `core/prompts.py` | 240 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 64 |
@@ -2190,12 +2190,12 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `memory/long_term.py` | 178 | `memory/short_term.py` | 179 |
 | `memory/store.py` | 331 | `providers/__init__.py` | 55 |
 | `providers/base.py` | 49 | `providers/embeddings.py` | 305 |
-| `providers/llm.py` | 285 | `providers/rerank.py` | 102 |
+| `providers/llm.py` | 285 | `providers/rerank.py` | 197 |
 | `rag/__init__.py` | 68 | `rag/evaluator.py` | 384 |
 | `rag/generator.py` | 403 | `rag/indexer.py` | 595 |
 | `rag/lexical.py` | 258 | `rag/parent_store.py` | 139 |
 | `rag/prepare.py` | 207 | `rag/reorder.py` | 28 |
-| `rag/rerank.py` | 8 | `rag/retriever.py` | 510 |
+| `rag/rerank.py` | 8 | `rag/retriever.py` | 513 |
 | `rag/structure.py` | 334 | `static/gen_favicon.py` | 148 |
 | `tools/__init__.py` | 1 | `tools/sqlite_tools.py` | 255 |
 | `utils/__init__.py` | 1 | `utils/cache.py` | 120 |
@@ -2256,7 +2256,7 @@ python scripts/verify_doc_linenos.py
 | 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-744）` |
 | 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 231-240 |
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:131-150` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（497 行）、`app/config.py`（789 行） |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（497 行）、`app/config.py`（812 行） |
 | 9 | 区域行号表（裸区间） | `287-342` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:244-319` |
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
