@@ -4,12 +4,35 @@
 以**五个职责单一的子 Agent**（路由 / 闲聊 / 简单 RAG / 复杂 RAG / 工具）协作完成
 意图识别、边界管控、知识问答、业务工具调用、多轮对话与异常兜底的全链路闭环。
 
-> 参考设计：[基于 LangGraph + FastAPI + 大模型的企业智能助手 RAG 知识引擎系统设计与实践](https://bbs.huaweicloud.com/blogs/482867)
+## 效果速览
 
-**目录**：[一、核心能力](#一核心能力) · [二、部署与启动](#二部署与启动) · [三、目录结构](#三目录结构) ·
-[四、LangGraph 工作流](#四langgraph-工作流五-agent-协作) · [五、API 接口清单](#五api-接口清单) ·
-[六、关键设计说明](#六关键设计说明) · [七、配置参考](#七配置参考) · [八、实测结果](#八实测结果) ·
-[九、二次开发指引](#九二次开发指引)
+<table>
+  <tr>
+    <td width="50%">
+      <b>智能对话</b><br/>
+      <img src="docs/images/panel-answer.png" alt="智能对话：流式输出 + 引用溯源 + 场景徽章" />
+    </td>
+    <td width="50%">
+      <b>执行耗时瀑布图</b><br/>
+      <img src="docs/images/panel-trace.png" alt="嵌套 span 树：一次请求各阶段耗时" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <b>工作流引擎</b><br/>
+      <img src="docs/images/panel-workflow.png" alt="LangGraph 拓扑：9 节点 / 3 条件边" />
+    </td>
+    <td width="50%">
+      <b>知识库管理</b><br/>
+      <img src="docs/images/panel-knowledge.png" alt="知识库管理：文档与片段" />
+    </td>
+  </tr>
+</table>
+
+**目录**：[一、核心能力](#一核心能力) · [二、部署与启动](#二部署与启动) · [三、功能展示](#三功能展示) ·
+[四、项目结构](#四项目结构) · [五、LangGraph 工作流](#五langgraph-工作流五-agent-协作) ·
+[六、API 接口清单](#六api-接口清单) · [七、关键设计说明](#七关键设计说明) ·
+[八、配置说明](#八配置说明) · [九、实测结果](#九实测结果) · [十、二次开发指引](#十二次开发指引)
 
 > 更细的代码地图见 [`docs/project-introduction.md`](docs/project-introduction.md)
 > （带精确行号，由 pytest 里的校验器守着）；当前架构的权威描述见
@@ -30,7 +53,7 @@
 | 请求级上下文 | 同请求内共享中间结果，避免重复计算与参数穿透（`app/core/request_ctx.py`）：query 向量复用、来源白名单、本轮证据。**授权事实与证据不由模型回传**——否则等于把"我能查谁的资料"交给模型决定 |
 | 可观测性 | 嵌套 span 树（对齐 OpenTelemetry 的 trace=span 树）+ 前端瀑布图 + `logs/trace.jsonl` 持久化（**落盘前统一过一层脱敏**，见 `TRACE_MASK_*`）；可选接入 LangSmith（`LANGSMITH_*` 环境变量，LangChain 自动 trace） |
 | 工程化横切 | 统一异常基类、Prompt 注册表、trace_id 贯穿日志、入站限流（滑动窗口，默认 20 次/分/IP） |
-| 长短期记忆 | 参考 nanobot 设计（`app/memory/`）：短期滑动窗口 → 会话归档 → LLM/规则蒸馏为长期事实，支持人工审阅修正 |
+| 长短期记忆 | 短期滑动窗口 → 会话归档 → LLM/规则蒸馏为长期事实（`app/memory/`），支持人工审阅修正 |
 | 评估迭代 | 命中率 / MRR / 用户好评率可查询（`/evaluate/*`），反馈驱动调优闭环 |
 | 业务工具集成 | **3 个只读工具**（`app/tools/sqlite_tools.py`）：按姓名查员工 / 按工号查员工信息 / 查假期余额，数据源为 SQLite（`app/db/enterprise_db.py`）。只读三层强制：连接层 `mode=ro` + 代码层只有 SELECT + 测试层真的尝试写入并断言失败 |
 | 无登录态设计 | 服务端**没有登录态**：`user_id` 只用于隔离长期记忆，不参与任何鉴权，也没有工具会读它。工号只能来自用户原话或工具返回值——正常路径下由 `find_employee_by_name` 换取，模型不得编造。遇到「**我的**年假还剩几天」这类问法，正确行为是向用户索要姓名或工号 |
@@ -235,7 +258,52 @@ python scripts/eval_retrieval.py --update    # 确认后刷新基线（默认拒
 
 ---
 
-## 三、目录结构
+## 三、功能展示
+
+前端是**零构建的单文件 SPA**（`app/static/index.html`，服务起在 8001 端口即可直接访问），
+六大模块对应后端的六组能力。
+
+### 3.1 智能对话
+
+流式输出、**引用溯源**（正文里的 `[1]` 可跳转回原文片段）、场景徽章
+（路由判定的意图 / 命中的知识域 / 耗时）、以及点赞点踩反馈。
+
+<p align="center"><img src="docs/images/panel-answer.png" alt="智能对话" width="760" /></p>
+
+### 3.2 可观测性：执行耗时瀑布图
+
+每次请求产出一棵**嵌套 span 树**（对齐 OpenTelemetry 的 trace=span 树），
+面板按耗时比例画出瀑布图，能直接看出"这一轮到底慢在哪一步"。
+
+<p align="center"><img src="docs/images/panel-trace.png" alt="执行耗时瀑布图" width="760" /></p>
+
+### 3.3 工作流引擎
+
+LangGraph 拓扑可视化：**9 个节点 / 3 条条件边**，路由 Agent 是唯一入口。
+面板会展示当前编译图的节点集合，改了图却忘了同步节点标签会在这里露出来。
+
+<p align="center"><img src="docs/images/panel-workflow.png" alt="工作流拓扑" width="760" /></p>
+
+### 3.4 知识库管理
+
+文档上传（PDF / Markdown / TXT）、索引重建、片段数与来源分布一览。
+PDF 走三级降级解析，**上传路径与重建路径共用同一个入口**，不会出现"同一个 PDF
+两种解析结果"。
+
+<p align="center"><img src="docs/images/panel-knowledge.png" alt="知识库管理" width="760" /></p>
+
+### 3.5 其余模块
+
+| 模块 | 做什么 |
+|---|---|
+| 记忆系统 | 查看 / 写入长期事实（`MEMORY.md` / `USER.md`）、浏览会话归档、手动触发蒸馏（Dream） |
+| 评估迭代 | 跑内置离线评测（命中率 / MRR）、查看好评率与最近差评、生成调优建议 |
+| 服务自测 | 一键跑 9 项启动自检 + 深度检查（真实调用 LLM / Embedding） |
+| 路由预演 | 输入一句话看意图漏斗各层打分与最终路由，用于排查"为什么被分到这条路" |
+
+---
+
+## 四、项目结构
 
 ```
 langgraph-enterprise-bot/
@@ -259,7 +327,7 @@ langgraph-enterprise-bot/
 │   │   ├── generator.py        #   L4 生成控制：引用溯源、置信度拒答、长忆注入
 │   │   ├── evaluator.py        #   L5 评估迭代：命中率/MRR/好评率、调优建议
 │   │   └── eval_cases.yaml     #   L5 评测用例（外置，无需改码即可增删）
-│   ├── memory/                 # 记忆系统（参考 HKUDS/nanobot 设计）
+│   ├── memory/                 # 记忆系统（短期窗口 / 归档 / 蒸馏两阶段）
 │   │   ├── store.py            #   文件存储层：history.jsonl / MEMORY.md / USER.md
 │   │   ├── short_term.py       #   短期记忆：滑动窗口 + 字符预算裁剪
 │   │   ├── long_term.py        #   长期记忆：事实去重沉淀、规则化抽取降级
@@ -326,7 +394,7 @@ langgraph-enterprise-bot/
 
 ---
 
-## 四、LangGraph 工作流（五 Agent 协作）
+## 五、LangGraph 工作流（五 Agent 协作）
 
 **九个节点，三条条件边。** 路由 Agent 是唯一入口，五个子 Agent 各自只做一件事。
 
@@ -386,7 +454,7 @@ langgraph-enterprise-bot/
 
 ---
 
-## 五、API 接口清单
+## 六、API 接口清单
 
 ### 对话服务
 | 方法 | 路径 | 说明 |
@@ -442,11 +510,11 @@ langgraph-enterprise-bot/
 
 ---
 
-## 六、关键设计说明
+## 七、关键设计说明
 
 ### 1. 三级自动降级（保证任何环境都能跑通）
 
-这是本项目相对参考文章最重要的工程化改进 —— **任何外部依赖缺失都不会导致服务不可用**：
+**任何外部依赖缺失都不会导致服务不可用** —— 这是一条硬要求，不是"尽量"：
 
 | 组件 | 优先方案 | 降级方案 | 触发条件 |
 |---|---|---|---|
@@ -491,7 +559,7 @@ langgraph-enterprise-bot/
 
 ---
 
-## 七、配置参考
+## 八、配置说明
 
 全部配置项见 `.env.example`，核心参数：
 
@@ -539,7 +607,7 @@ langgraph-enterprise-bot/
 
 ---
 
-## 八、实测结果
+## 九、实测结果
 
 环境：Python 3.13.12 / macOS，API 模式（真实 Embedding + 真实大模型）
 
@@ -578,7 +646,7 @@ langgraph-enterprise-bot/
 
 ---
 
-## 九、二次开发指引
+## 十、二次开发指引
 
 ### 代码从哪读起
 
