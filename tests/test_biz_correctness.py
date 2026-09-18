@@ -153,7 +153,7 @@ def test_direct_exit_never_looks_like_a_refusal(monkeypatch):
     from tests.fakes import RecordingModel
 
     monkeypatch.setattr(
-        agent_mod, "_default_model",
+        agent_mod, "default_model",
         lambda: RecordingModel(["申请邮箱扩容请到 IT 服务台办理，或联系 IT 支持组。"]),
     )
     out = nodes.tool_node(
@@ -218,7 +218,7 @@ def test_business_tool_exception_reports_human(monkeypatch):
     # StructuredTool 是 pydantic 模型，不能只替换其 invoke 方法，故整体换掉映射里的工具对象
     monkeypatch.setitem(agent_mod._TOOLS_BY_NAME, "query_employee_info", _BoomTool())
     monkeypatch.setattr(
-        agent_mod, "_default_model",
+        agent_mod, "default_model",
         lambda: RecordingModel([
             {"name": "query_employee_info", "args": {"employee_id": "E1001"}},
             [],

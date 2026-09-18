@@ -23,19 +23,32 @@ from typing import List
 from app import config
 from app.providers.base import Embedder
 from app.utils.logger import logger
+from app.utils.text import CJK_CHAR, CJK_RANGE
 
-_TOKEN_PATTERN = re.compile(r"[\u4e00-\u9fff]|[A-Za-z]+|\d+")
+# 汉字区间从 app.utils.text 取，不在这里重写一遍——同一区间用 ``一-鿿`` 与
+# ``\u4e00-\u9fff`` 两种写法表达，读代码的人会以为它们不是一回事。
+_TOKEN_PATTERN = re.compile(f"[{CJK_RANGE}]|[A-Za-z]+|\\d+")
 
 
 def _tokenize(text: str) -> List[str]:
-    """中英文混合分词：中文按字 + 二元组，英文数字按词。"""
+    """中英文混合分词：中文按字 + 二元组，英文数字按词。
+
+    ⚠️ **刻意不剔虚词**，与 ``app/rag/lexical.py::_tokenize`` 不同——这不是遗漏：
+    - 倒排索引剔虚词，是因为「的/了/是」会让所有片段的词面分一起冲到 1.0，
+      词面路彻底失去排序能力；
+    - 这里的输出要喂给**本地哈希向量**：token 集合直接决定向量，剔掉虚词等于
+      改变全部历史向量的取值（缓存里每一个向量都要重算），收益却为零——
+      向量路本来就不靠字面区分度排序。
+
+    两者的差别是**消费方决定的**，故各自保留；共用的只有「哪些字算中文」。
+    """
     text = text.lower()
     units = _TOKEN_PATTERN.findall(text)
     tokens: List[str] = list(units)
     # 中文二元组，提升短语匹配能力
     for i in range(len(units) - 1):
-        if _TOKEN_PATTERN.fullmatch(units[i]) and re.match(r"[\u4e00-\u9fff]", units[i]) \
-                and re.match(r"[\u4e00-\u9fff]", units[i + 1]):
+        if _TOKEN_PATTERN.fullmatch(units[i]) and CJK_CHAR.match(units[i]) \
+                and CJK_CHAR.match(units[i + 1]):
             tokens.append(units[i] + units[i + 1])
     return tokens
 

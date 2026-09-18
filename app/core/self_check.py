@@ -12,7 +12,7 @@ from app.core.rag_engine import build_index, get_stats, retrieve_knowledge_docs
 from app.db.redis_db import get_redis_mode
 from app.db.vector_db import get_store_type, get_vector_store
 from app.graph.workflow_graph import enterprise_workflow
-from app.utils.doc_loader import list_data_files
+from app.utils.doc_loader import file_name, list_data_files
 from app.utils.logger import logger
 
 FAST_ITEMS = {"service", "vector_db", "agent_config", "sqlite_db", "workflow"}
@@ -82,7 +82,7 @@ def _check_retrieval() -> dict:
         raise RuntimeError("检索返回空结果，请检查向量索引")
     best = hits[0]
     return {
-        "detail": f"Top1 相似度 {best['score']} · 来源 {best['source'].split('/')[-1]}",
+        "detail": f"Top1 相似度 {best['score']} · 来源 {file_name(best['source'])}",
         "extra": {"hits": len(hits), "top_score": best["score"]},
     }
 

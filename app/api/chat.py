@@ -40,10 +40,27 @@ from app.rag.generator import (
     extract_cited_indexes,
     stream_answer_tokens,
 )
+from app.utils.doc_loader import file_name
 from app.utils.logger import logger
 from app.utils.validator import ChatRequest, sanitize_text
 
 router = APIRouter(prefix="/chat", tags=["对话服务"])
+
+#: 回传给客户端的「历史轮数」上限。
+_HISTORY_ROUNDS_CAP = 10
+
+
+def history_rounds(history: list) -> int:
+    """本轮对话携带的历史轮数（含本轮）。
+
+    ``history`` 是消息列表（一问一答各一条），故轮数 = ``len // 2 + 1``。
+    封顶避免长会话把这个字段撑成一个无意义的数字。
+
+    ⚠️ 抽成函数不是为了复用几行，而是因为**两条链路（流式 / 非流式）的响应体
+    必须给出同一个数**：此前这个式子在两处各写了一遍，改一处就会让
+    `/chat/ask` 与 `/chat/ask/stream` 的同一字段含义分叉，且不会有任何报错。
+    """
+    return min(len(history) // 2 + 1, _HISTORY_ROUNDS_CAP)
 
 
 def collect_soft_warnings(result: dict) -> int:
@@ -89,7 +106,7 @@ def _sources_view(docs) -> list:
     return [
         {
             "content": d.get("content", ""),
-            "source": str(d.get("source", "")).split("/")[-1],
+            "source": file_name(str(d.get("source", ""))),
             "score": d.get("score", 0),
             "lexical": d.get("lexical", 0),
             "fused": d.get("fused", 0),
@@ -237,7 +254,7 @@ async def chat_ask(req: ChatRequest) -> dict:
         "memory_consolidated": bool(consolidated),
         "elapsed_ms": elapsed,
         "llm_mode": get_llm_mode(),
-        "history_rounds": min(len(history) // 2 + 1, 10),
+        "history_rounds": history_rounds(history),
     }
 
 
@@ -400,7 +417,7 @@ async def chat_ask_stream(req: ChatRequest) -> StreamingResponse:
             "memory_consolidated": bool(consolidated),
             "elapsed_ms": elapsed,
             "llm_mode": get_llm_mode(),
-            "history_rounds": min(len(history) // 2 + 1, 10),
+            "history_rounds": history_rounds(history),
         })
         yield sse("done", {})
 

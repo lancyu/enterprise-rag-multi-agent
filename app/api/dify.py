@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 from app import config
 from app.db.vector_db import get_vector_store
 from app.rag import retriever
+from app.utils.doc_loader import file_name
 from app.utils.logger import logger, preview
 
 router = APIRouter(tags=["Dify 兼容接口"])
@@ -79,10 +80,12 @@ def _normalize_score(fused: float) -> float:
     若直接透传，Dify 里只要把分数阈值调到 0.02 以上，所有结果都会被过滤掉，
     表现为「知识库明明有内容，Dify 却永远检索不到」。
 
-    做法：除以 RRF 的理论上限 `(w_dense + w_lex) / (RRF_K + 1)`。
+    做法：除以 RRF 的理论上限。该上限只在 `app.rag.retriever.rrf_upper_bound`
+    定义一次——此前这里与 `app/rag/generator.py` 各算一遍同一个公式，改权重时
+    只要漏改一处，两边的归一化口径就不再一致。
     与项目内置信度计算口径一致，因此归一化后的分数跨查询、跨配置可比。
     """
-    upper = (retriever.DENSE_WEIGHT + retriever.LEXICAL_WEIGHT) / (retriever.RRF_K + 1)
+    upper = retriever.rrf_upper_bound()
     if upper <= 0:
         return 0.0
     return max(0.0, min(1.0, float(fused) / upper))
@@ -124,7 +127,7 @@ def _build_payload_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
     """
     meta = dict(meta or {})
     source = str(meta.get("source", ""))
-    payload: Dict[str, Any] = {"source": source, "file_name": source.split("/")[-1]}
+    payload: Dict[str, Any] = {"source": source, "file_name": file_name(source)}
     for field in _DIFY_PAYLOAD_FIELDS:
         # chunk_index / page 的缺席哨兵是 -1，其余字段是空串
         payload[field] = meta.get(field, -1 if field in ("chunk_index", "page") else "")
@@ -242,7 +245,7 @@ async def _do_retrieval(req: RetrievalRequest, authorization: Optional[str]) -> 
             # 父子索引开启时用父块，让 Dify 拿到的上下文更完整
             "content": hit.get("parent_content") or hit.get("content", ""),
             "score": round(score, 4),
-            "title": source.split("/")[-1] or "unknown",
+            "title": file_name(source) or "unknown",
             "metadata": payload_meta or {},
         })
         if len(records) >= top_k:

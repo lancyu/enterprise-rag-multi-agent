@@ -75,7 +75,7 @@ def test_successful_tools_produce_no_soft_warning(monkeypatch, business_db) -> N
     from app.core import tool_agent as agent_mod
 
     monkeypatch.setattr(
-        agent_mod, "_default_model",
+        agent_mod, "default_model",
         lambda: _fake_tool_model(
             {"name": "query_leave_balance", "args": {"employee_id": "E1001"}},
             [],
@@ -95,7 +95,7 @@ def test_grounding_rejection_is_recorded_as_soft_warning(monkeypatch) -> None:
     from app.core import tool_agent as agent_mod
 
     monkeypatch.setattr(
-        agent_mod, "_default_model",
+        agent_mod, "default_model",
         lambda: _fake_tool_model(
             {"name": "find_employee_by_name", "args": {"name": "王五"}},
             [],
@@ -128,7 +128,7 @@ def test_tool_execution_failure_is_recorded_and_routed_to_human(monkeypatch, bus
 
     monkeypatch.setitem(agent_mod._TOOLS_BY_NAME, "query_leave_balance", _BoomTool())
     monkeypatch.setattr(
-        agent_mod, "_default_model",
+        agent_mod, "default_model",
         lambda: _fake_tool_model(
             {"name": "query_leave_balance", "args": {"employee_id": "E1001"}},
             [],

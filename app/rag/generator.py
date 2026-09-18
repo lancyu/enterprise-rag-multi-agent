@@ -29,7 +29,8 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from app import config
 from app.core.prompts import get as get_prompt
-from app.rag.retriever import DENSE_WEIGHT, LEXICAL_WEIGHT, RRF_K
+from app.rag.retriever import rrf_upper_bound
+from app.utils.doc_loader import file_name
 from app.utils.logger import logger
 
 # 低于此置信度时拒答（宁可转人工，也不硬凑无关片段）
@@ -117,13 +118,13 @@ def build_context(docs: List[Dict[str, Any]], tool_result: Optional[str] = None)
         # 行为与改造前完全一致。
         body = doc.get("parent_content") or doc.get("content", "")
         blocks.append(
-            f"[{i}] 来源：{source.split('/')[-1]}\n{body}"
+            f"[{i}] 来源：{file_name(source)}\n{body}"
         )
         citations.append(
             {
                 "index": i,
                 "source": source,
-                "file_name": source.split("/")[-1].split("\\")[-1],
+                "file_name": file_name(source),
                 "score": doc.get("score", 0.0),
                 "lexical": doc.get("lexical", 0.0),
                 "fallback": bool(doc.get("fallback", False)),
@@ -161,7 +162,7 @@ def estimate_confidence(docs: List[Dict[str, Any]], tool_result: Optional[str] =
         # 无检索依据：只有工具结果才敢说话，否则置信度为 0（触发拒答）
         return 0.6 if tool_result else 0.0
 
-    fused_max = (DENSE_WEIGHT + LEXICAL_WEIGHT) / (RRF_K + 1)
+    fused_max = rrf_upper_bound()
     top = docs[0]
     base = min(1.0, float(top.get("fused", 0.0)) / fused_max) if fused_max else 0.0
 

@@ -20,6 +20,21 @@ from app.utils.logger import logger
 SUPPORTED_SUFFIX = {".pdf", ".md", ".markdown", ".txt"}
 
 
+def file_name(source: str) -> str:
+    """从来源路径取展示用的文件名（只留最后一段）。
+
+    取 basename 的地方全仓有 9 处，此前**只有 2 处处理了 Windows 反斜杠**——
+    ``a\\b\\c.md`` 在其余 7 处会被原样返回整条路径，于是同一个来源在不同接口里
+    显示成不同的东西（前端引用列表显示 ``c.md``，Dify 侧的回传却是一条完整路径）。
+    抽到这里后判据只有一条：两种分隔符都切。
+
+    刻意不用 ``os.path.basename``——它按**当前平台**的分隔符切，在 Linux 上会漏掉
+    ``\\``；而来源字符串来自上传文件名、data 目录扫描、外部回填等多个入口，
+    不能假定它由谁生成。
+    """
+    return (source or "").replace("\\", "/").rsplit("/", 1)[-1]
+
+
 def _table_to_markdown(table: Optional[List[List[Optional[str]]]]) -> str:
     """把 pdfplumber 提取的二维表转成 Markdown pipe table。
 

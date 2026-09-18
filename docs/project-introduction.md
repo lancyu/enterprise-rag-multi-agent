@@ -45,7 +45,7 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **15934 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **16008 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | 8 个 + 2 个条件分支 |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
@@ -116,12 +116,12 @@
 
 | 层 | 名称 | 文件 | 行数 | 一句话职责 |
 |---|---|---|---|---|
-| **L1** | 数据准备 | `app/rag/prepare.py` | 200 | 把原始文件清洗成"干净语料" |
+| **L1** | 数据准备 | `app/rag/prepare.py` | 207 | 把原始文件清洗成"干净语料" |
 | **L1.5** | 结构解析 | `app/rag/structure.py` | 334 | 看懂文档的章节层级 |
 | **L2** | 索引构建 | `app/rag/indexer.py` | 595 | 切片 + 向量化 + 入库 |
-| **L3** | 检索优化 | `app/rag/retriever.py` | 511 | 多路召回 + 融合 + 过滤 |
-| **L4** | 生成控制 | `app/rag/generator.py` | 402 | 带引用地作答，或礼貌拒答 |
-| **L5** | 评估迭代 | `app/rag/evaluator.py` | 383 | 量化效果，回流调参 |
+| **L3** | 检索优化 | `app/rag/retriever.py` | 510 | 多路召回 + 融合 + 过滤 |
+| **L4** | 生成控制 | `app/rag/generator.py` | 403 | 带引用地作答，或礼貌拒答 |
+| **L5** | 评估迭代 | `app/rag/evaluator.py` | 384 | 量化效果，回流调参 |
 
 ### 2.4 LangGraph 9 节点工作流（五 Agent 协作）
 
@@ -190,13 +190,13 @@
 | `app/main.py` | **1-231** | 应用装配：lifespan、中间件、路由注册、全局异常 |
 | `app/config.py` | **1-744** | 全局配置中心（所有环境变量集中于此） |
 
-### 3.2 `app/api/` — HTTP 接口层（1492 行）
+### 3.2 `app/api/` — HTTP 接口层（1515 行）
 
 | 文件 | 行号范围 | 路由前缀 | 职责 |
 |---|---|---|---|
-| `chat.py` | **1-444** | `/chat` | 问答（流式 + 非流式）、历史、反馈 |
-| `knowledge.py` | **1-175** | `/knowledge` | 知识库上传 / 删除 / 搜索 / 重建索引 |
-| `dify.py` | **1-370** | `/retrieval`、`/dify` | 把自己接成 Dify 的"外部知识库" |
+| `chat.py` | **1-461** | `/chat` | 问答（流式 + 非流式）、历史、反馈 |
+| `knowledge.py` | **1-178** | `/knowledge` | 知识库上传 / 删除 / 搜索 / 重建索引 |
+| `dify.py` | **1-373** | `/retrieval`、`/dify` | 把自己接成 Dify 的"外部知识库" |
 | `memory.py` | **1-133** | `/memory` | 记忆读写运维（灵魂、事实、画像、蒸馏） |
 | `workflow.py` | **1-146** | `/workflow` | 工作流状态查询与手动触发（拓扑声明在此，加载时与编译图做断言） |
 | `evaluation.py` | **1-80** | `/evaluate` | 检索评测、报告、改进建议、反馈统计 |
@@ -221,7 +221,7 @@
 | `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
 | `workflow_graph.py` | **1-192** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（5439 行）
+### 3.4 `app/core/` — 调度与基础能力（5410 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -240,10 +240,10 @@
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
-| `router_agent.py` | **1-414** | **路由 Agent**：入口场景判定 + 边界管控。**Phase 0 起它同时是"门面"**——场景常量与越界话术改由 `routing/catalog.py` 定义、此处 re-export，既有 import 点一个不动，但"唯一定义处"已经转移 |
+| `router_agent.py` | **1-393** | **路由 Agent**：入口场景判定 + 边界管控。**Phase 0 起它同时是"门面"**——场景常量与越界话术改由 `routing/catalog.py` 定义、此处 re-export，既有 import 点一个不动，但"唯一定义处"已经转移 |
 | `routing/`（包） | **1-1809** | **混合意图路由（四层漏斗）**：目录 → 句式信号 → 锚点 → 融合打分 → 门控 → 仲裁 → 编排。当前只被 `/routing/intent-preview` 调用 |
-| `sub_agents.py` | **1-355** | **闲聊 / 简单 RAG / 复杂 RAG** 三个子 Agent（统一产出 `AgentAnswer`） |
-| `tool_agent.py` | **1-712** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
+| `sub_agents.py` | **1-334** | **闲聊 / 简单 RAG / 复杂 RAG** 三个子 Agent（统一产出 `AgentAnswer`） |
+| `tool_agent.py` | **1-694** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
 | `request_ctx.py` | **1-213** | 请求级共享：query 向量 / 来源白名单 / 本轮证据（授权与证据不由模型回传） |
 | `self_check.py` | **1-347** | 启动自检与健康检查（9 项） |
 | `prompts.py` | **1-240** | 提示词集中注册表 |
@@ -259,24 +259,24 @@
 
 | 文件 | 行号范围 | 层 | 职责 |
 |---|---|---|---|
-| `prepare.py` | **1-200** | L1 | 清洗 / 去重 / 元数据注入 |
+| `prepare.py` | **1-207** | L1 | 清洗 / 去重 / 元数据注入 |
 | `structure.py` | **1-334** | L1.5 | 章节层级识别与按节切块 |
 | `indexer.py` | **1-595** | L2 | 切片 / 向量化 / 幂等入库 |
-| `lexical.py` | **1-266** | L3 | 自研 BM25 倒排索引 |
-| `retriever.py` | **1-511** | L3 | 多路召回 / RRF 融合 / 软回退 |
+| `lexical.py` | **1-258** | L3 | 自研 BM25 倒排索引 |
+| `retriever.py` | **1-510** | L3 | 多路召回 / RRF 融合 / 软回退 |
 | `rerank.py` | **1-8** | L3 | 兼容壳（实现已迁至 `providers/rerank.py`） |
 | `reorder.py` | **1-28** | L3 | 缓解"迷失在中间"的片段重排 |
 | `parent_store.py` | **1-139** | L2/L3 | 父块旁路存储（small-to-big） |
-| `generator.py` | **1-402** | L4 | 引用 / 置信度 / 拒答 / 流式统计 |
-| `evaluator.py` | **1-383** | L5 | 命中率 / MRR / 忠实度 / 反馈 |
+| `generator.py` | **1-403** | L4 | 引用 / 置信度 / 拒答 / 流式统计 |
+| `evaluator.py` | **1-384** | L5 | 命中率 / MRR / 忠实度 / 反馈 |
 | `__init__.py` | **1-68** | — | 统一出口（纯 re-export） |
 
-### 3.6 `app/providers/` — 模型能力层（767 行）
+### 3.6 `app/providers/` — 模型能力层（780 行）
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
 | `llm.py` | **1-285** | 大模型工厂 + 限流退避 + 流式策略 |
-| `embeddings.py` | **1-278** | 向量化：本地哈希 / 远程 API / 带缓存代理 |
+| `embeddings.py` | **1-291** | 向量化：本地哈希 / 远程 API / 带缓存代理 |
 | `rerank.py` | **1-102** | cross-encoder 精排（默认关） |
 | `__init__.py` | **1-53** | 统一出口 |
 | `base.py` | **1-49** | `Embedder` / `Reranker` 抽象接口 |
@@ -306,7 +306,7 @@
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
-| `utils/doc_loader.py` | **1-283** | PDF/MD/TXT 解析（PDF 三级降级 + 表格转 Markdown + 图片 OCR） |
+| `utils/doc_loader.py` | **1-298** | PDF/MD/TXT 解析（PDF 三级降级 + 表格转 Markdown + 图片 OCR） |
 | `utils/validator.py` | **1-150** | 入参校验与注入过滤（Pydantic v2） |
 | `utils/cache.py` | **1-120** | 查询向量 LRU+TTL / 文档向量批量落盘 |
 | `utils/logger.py` | **1-74** | 日志：控制台 + 滚动文件 + trace_id 注入 |
@@ -442,19 +442,19 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 
 ### 4.2 HTTP 接口层 `app/api/`
 
-#### 📍 `app/api/chat.py`（1-444）—— 最核心的接口
+#### 📍 `app/api/chat.py`（1-461）—— 最核心的接口
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `collect_soft_warnings` | 49-84 | 收集可降级故障（唯一的读取点） |
-| `FeedbackRequest` | 137-145 | 反馈请求体 |
-| `chat_ask` | 161-241 | `POST /chat/ask` 非流式问答 |
-| `chat_ask_stream` | 245-415 | `POST /chat/ask/stream` SSE 流式问答 |
-| ├ `sse`（嵌套） | 260-261 | SSE 事件格式化 |
-| └ `event_stream`（嵌套） | 263-405 | 事件生成器（stage/token/meta/error/done） |
-| `chat_history` | 419-421 | `GET /chat/history/{session_id}` |
-| `chat_clear` | 425-428 | `DELETE /chat/history/{session_id}` |
-| `chat_feedback` | 432-444 | `POST /chat/feedback` 点赞/点踩 |
+| `collect_soft_warnings` | 66-101 | 收集可降级故障（唯一的读取点） |
+| `FeedbackRequest` | 154-162 | 反馈请求体 |
+| `chat_ask` | 178-258 | `POST /chat/ask` 非流式问答 |
+| `chat_ask_stream` | 262-432 | `POST /chat/ask/stream` SSE 流式问答 |
+| ├ `sse`（嵌套） | 277-278 | SSE 事件格式化 |
+| └ `event_stream`（嵌套） | 280-422 | 事件生成器（stage/token/meta/error/done） |
+| `chat_history` | 436-438 | `GET /chat/history/{session_id}` |
+| `chat_clear` | 442-445 | `DELETE /chat/history/{session_id}` |
+| `chat_feedback` | 449-461 | `POST /chat/feedback` 点赞/点踩 |
 
 **实现原理（小白版）**：
 
@@ -486,8 +486,8 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 
 | 文件 | 关键行号 | 要点 |
 |---|---|---|
-| `knowledge.py` | 上传 `79-138`、删除 `142-145`、搜索 `149-159`、重建 `163-175` | 上传两道闸：先看 `Content-Length` 预检，再分块累加（`_read_limited:31-50`），**不能先全量读进内存再判大小**；`_REBUILD_LOCK:19` 保证重建索引串行 |
-| `dify.py` | 检索 `203-252`、OpenAPI `274-349` | 见下方"score 归一化"说明 |
+| `knowledge.py` | 上传 `79-141`、删除 `145-148`、搜索 `152-162`、重建 `166-178` | 上传两道闸：先看 `Content-Length` 预检，再分块累加（`_read_limited:31-50`），**不能先全量读进内存再判大小**；`_REBUILD_LOCK:19` 保证重建索引串行 |
+| `dify.py` | 检索 `206-255`、OpenAPI `277-352` | 见下方"score 归一化"说明 |
 | `memory.py` | soul 写入 `43-78` | `AUTH_ENABLED=false` 时直接 403——"一次改掉全站人格"的能力不该存在于无防护服务上 |
 | `workflow.py` | 拓扑校验 `58-79`、执行 `99-146` | `_validate_topology` 在模块加载时比对声明拓扑与真实图，防止前端面板与真实执行路径漂移 |
 | `routing.py` | 阈值快照 `54-72`、预演 `76-93`、目录 `97-110` | **纯预演、零副作用**：不写 `request_ctx`、不调子 Agent、不写库。旧的统计 / 标定端点已随自造路由删除，`match_intent` 上也没有 `record` 参数了 |
@@ -498,7 +498,7 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 Dify 的 `score_threshold` 是 **0~1 的绝对相关度**语义，
 而本项目的 RRF 融合分只有约 **0.016** 量级（因为 RRF 分只取决于排名）。
 不归一化的话，用户在 Dify 界面把阈值调到 0.02 以上就**永远检索不到任何东西**，
-而且极难定位。所以 `_normalize_score`（`dify.py:73-88`）把分数除以理论上限映射到 0~1。
+而且极难定位。所以 `_normalize_score`（`dify.py:74-91`）把分数除以理论上限映射到 0~1。
 
 另一个坑：Dify 遇到非 200 响应只会在界面上抛一个通用错误，
 所以业务错误必须返回 **200 + `error_code`**，才能把"未配置 DIFY_API_KEY"这类原因显示给用户。
@@ -588,16 +588,16 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 
 ### 4.4 调度层 `app/core/`
 
-#### 📍 `app/core/router_agent.py`（1-414）—— 路由 Agent（入口 + 边界管控 + 常量门面）
+#### 📍 `app/core/router_agent.py`（1-393）—— 路由 Agent（入口 + 边界管控 + 常量门面）
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `RouteDecision` | 130-159 | 判定结果：场景 + 理由 + 来源 + 越界话术 |
-| `SOURCE_LOCAL` | 167 | **本地快通道**的 `source` 取值（`router:local`） |
-| `_local_route` | 184-228 | **本地快通道**：零模型判定，命中即返回，判不了返回 `None` |
-| `route_query` | 231-306 | 主入口：本地快通道 → 组装提示词 → 调模型 → 解析 |
-| `_parse_route` | 316-343 | 从模型输出里抠出场景名，不在闭集内即拒绝 |
-| `_fallback_route` | 376-408 | 模型不可用时的**确定性规则兜底** |
+| `RouteDecision` | 131-160 | 判定结果：场景 + 理由 + 来源 + 越界话术 |
+| `SOURCE_LOCAL` | 168 | **本地快通道**的 `source` 取值（`router:local`） |
+| `_local_route` | 185-229 | **本地快通道**：零模型判定，命中即返回，判不了返回 `None` |
+| `route_query` | 232-307 | 主入口：本地快通道 → 组装提示词 → 调模型 → 解析 |
+| `_parse_route` | 317-344 | 从模型输出里抠出场景名，不在闭集内即拒绝 |
+| `_fallback_route` | 361-393 | 模型不可用时的**确定性规则兜底** |
 
 **本地快通道：让这道闸门对句式固定的提问免费。** 路由 Agent 每次要花一次模型调用
 （实测 2000~2700ms），而它**不产出任何用户可见的内容**——这段时间是纯粹的闸门。
@@ -647,7 +647,7 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 | `app/core/routing/anchors.py` | **1-275** | "能不能整句锚定？" —— 层①，零成本 |
 | `app/core/routing/fusion.py` | **1-443** | "各候选各得几分、怎么融合？" —— 层② |
 | `app/core/routing/gating.py` | **1-115** | "分数够格吗？和次优通道拉开了吗？" —— 层③ |
-| `app/core/routing/arbitration.py` | **1-199** | "实在拿不准时问模型" —— 层④，唯一花钱处 |
+| `app/core/routing/arbitration.py` | **1-178** | "实在拿不准时问模型" —— 层④，唯一花钱处 |
 | `app/core/routing/router.py` | **1-380** | "按顺序串起来，并守住时间预算" —— 编排 |
 
 **四层漏斗，命中即短路**（写的是设计意图，**不是"已经接管生产"**）：
@@ -786,15 +786,15 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 把三者混成一个 `confidence` 数字是最容易做的事，也是最没用的：
 它无法回答"这次到底是慢、是坏、还是本来就难"。
 
-#### 📍 `app/core/sub_agents.py`（1-355）—— 闲聊 / 简单 RAG / 复杂 RAG
+#### 📍 `app/core/sub_agents.py`（1-334）—— 闲聊 / 简单 RAG / 复杂 RAG
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `AgentAnswer` | 62-88 | 三个子 Agent 的**统一产出形状**（text / docs / sub_queries / steps / degraded…） |
-| `run_smalltalk_agent` | 138-147 | 闲聊：模板直出，**不调模型** |
-| `run_simple_rag_agent` | 153-182 | 简单 RAG：恰好一次检索 |
-| `decompose_query` | 188-222 | 复杂 RAG：把问题拆成多个子查询（调一次模型） |
-| `run_complex_rag_agent` | 249-321 | 复杂 RAG：多次检索 → 合并去重 |
+| `AgentAnswer` | 63-89 | 三个子 Agent 的**统一产出形状**（text / docs / sub_queries / steps / degraded…） |
+| `run_smalltalk_agent` | 139-148 | 闲聊：模板直出，**不调模型** |
+| `run_simple_rag_agent` | 154-183 | 简单 RAG：恰好一次检索 |
+| `decompose_query` | 189-223 | 复杂 RAG：把问题拆成多个子查询（调一次模型） |
+| `run_complex_rag_agent` | 250-322 | 复杂 RAG：多次检索 → 合并去重 |
 
 **为什么三个 Agent 共用一个 `AgentAnswer`**：它们的下游都是同一个 L4 与同一个观测面板。
 形状统一之后，新增一个 Agent 不需要改生成层、不需要改前端契约。
@@ -806,17 +806,17 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 **复杂 RAG 的两条硬约束**：① **原问题必须参与检索**——拆解模型漏掉主语的例子很多，
 只搜子问题会漏掉最相关的那一篇；② 合并去重取**较高** fused 分，不是先到先得。
 
-#### 📍 `app/core/tool_agent.py`（1-712）—— 工具 Agent
+#### 📍 `app/core/tool_agent.py`（1-694）—— 工具 Agent
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `AGENT_TOOLS` | 111 | 工具清单（从 `app/tools/sqlite_tools.py` 来） |
-| `GROUNDED_ARGS` | 117-123 | 哪些参数必须能在**用户原话**里找到出处 |
-| `parse_text_tool_calls` | 214-247 | 从**正文**里回捞被写成文本的工具调用 |
-| `ToolDecision` | 272-326 | 决策结果（含 `direct_answer` / `steps` / `used_tools`） |
-| `execute_tool_calls` | 404-488 | 执行调用：schema 校验 → 落地护栏 → 记 step |
-| `run_tool_agent` | 494-562 | 主循环：取证据 → 交回决策（最多 `TOOL_AGENT_MAX_STEPS` 轮） |
-| `_decide` | 565-690 | 每轮的判断：继续调工具 / 直答 / 收口 |
+| `AGENT_TOOLS` | 115 | 工具清单（从 `app/tools/sqlite_tools.py` 来） |
+| `GROUNDED_ARGS` | 121-127 | 哪些参数必须能在**用户原话**里找到出处 |
+| `parse_text_tool_calls` | 218-251 | 从**正文**里回捞被写成文本的工具调用 |
+| `ToolDecision` | 276-330 | 决策结果（含 `direct_answer` / `steps` / `used_tools`） |
+| `execute_tool_calls` | 408-492 | 执行调用：schema 校验 → 落地护栏 → 记 step |
+| `run_tool_agent` | 498-566 | 主循环：取证据 → 交回决策（最多 `TOOL_AGENT_MAX_STEPS` 轮） |
+| `_decide` | 569-694 | 每轮的判断：继续调工具 / 直答 / 收口 |
 
 **⚠️ 直答出口的判据是 `not used_tools`（一次都没**成功**取到证据），不是 `attempted`（提过调用）**
 
@@ -920,6 +920,7 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 | `rate_limit.py` | `RateLimiter` 29-48 | 每 IP 一个 `deque` 存命中时间戳，滑动窗口 60s，默认 20 次/分钟 |
 | `request_ctx.py` | `get/set_query_vector` 139-146 | 用 `contextvars` 存 `(query文本, 向量)`，读时校验文本一致才算命中 |
 | `source_acl.py` | `resolve_allowed_sources` 24-48 | 返回三种语义：`None` 不限制 / `[]` 全拒 / 其余是 fnmatch 模式。**fail-closed** |
+| `llm_access.py` | `content_of` 23-40 / `default_model` 43-52 | 调用聊天模型的公共管道。这两个函数曾在 4 个模块里**各抄一遍（共 8 份）**、函数体 sha1 完全相同；改一处忘一处会让另外三条链路把回复静默读成空串。`default_model` **必须**惰性 import |
 | `errors.py` | `AppError` 9-16 | 类属性 `default_message` 提供默认文案 |
 | `observability.py` | `setup_langsmith` 20-39 | 靠设环境变量让 LangChain 自动上报，业务零改动 |
 
@@ -927,17 +928,17 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 
 ### 4.5 RAG 五层 `app/rag/`
 
-#### 📍 L1 `prepare.py`（1-200）—— 数据准备
+#### 📍 L1 `prepare.py`（1-207）—— 数据准备
 
 | 组件 | 行号 |
 |---|---|
-| `normalize_text` | 49-64 |
-| `content_fingerprint` | 67-69 |
-| `jaccard_similarity` | 77-82 |
-| `is_near_duplicate` | 85-87 |
-| `enrich_metadata` | 101-115 |
-| `prepare_documents` | 121-173 |
-| `quality_report` | 188-200 |
+| `normalize_text` | 50-65 |
+| `content_fingerprint` | 68-70 |
+| `jaccard_similarity` | 78-83 |
+| `is_near_duplicate` | 86-88 |
+| `enrich_metadata` | 108-122 |
+| `prepare_documents` | 128-180 |
+| `quality_report` | 195-207 |
 
 **流水线**：归一化 → 清洗 → 长度校验 → 精确去重 → 近重复去重 → 元数据注入。
 
@@ -1039,18 +1040,25 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 全量建索引才重训 IDF，增量入库沿用旧 IDF，否则历史向量会失去可比性。
 `attach_parents` 必须在**向量化之前**调用，否则 `parent_id` 进不了向量库，检索时无从回捞。
 
-#### 📍 L3 `lexical.py`（1-266）—— 自研 BM25 倒排索引
+#### 📍 L3 `lexical.py`（1-258）—— 自研 BM25 倒排索引
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `_cjk_runs` | 48-50 | 切出连续中文串 |
-| `_tokenize` | 53-71 | 分词：单字 + 相邻二元组 |
-| `LexicalIndex` | 90-249 | 索引主体 |
-| ├ `add` | 139-150 |
-| ├ `remove` | 152-165 |
-| ├ `_recompute_avg_len` | 180-189 | 缓存平均长度 |
-| ├ `_bm25` | 197-213 | **BM25 打分** |
-| └ `search` | 215-240 | 检索 |
+| `_tokenize` | 45-63 | 分词：单字 + 相邻二元组 |
+| `LexicalIndex` | 82-241 | 索引主体 |
+| ├ `add` | 131-142 |
+| ├ `remove` | 144-157 |
+| ├ `_recompute_avg_len` | 172-181 | 缓存平均长度 |
+| ├ `_bm25` | 189-205 | **BM25 打分** |
+| └ `search` | 207-232 | 检索 |
+
+**⚠️ 这里曾经还有两份「中文切分」**：`_cjk_runs` 与虚词集合 `_CJK_STOP` 在本文件与
+L3 `retriever.py` 里**各写了一遍**（函数体一字不差，75 字虚词表内容 sha1 相同），
+连汉字区间都有两种写法（`一-鿿` 与 `\u4e00-\u9fff`）。现**已下沉到通用工具层**
+（见 4.10 节的 `text.py`），本模块只 import。
+为什么必须消掉：虚词表加一个字，只有倒排索引受益、向量侧的字符集不受影响，
+两路召回于是**悄悄分叉且不报错**。原注释写着「与 retriever._CJK_STOP 一致」——
+那是用注释记录重复，而不是消除它。
 
 **实现原理（小白版）**：
 
@@ -1086,21 +1094,21 @@ IDF = log(1 + (N - df + 0.5) / (df + 0.5))
 **设计取舍**：`avg_len` 曾经用 `@property` 每次打分都重算全量平均，
 整体退化成 O(N²)。现在改成增删时缓存、打分时 O(1) 读取。
 
-#### 📍 L3 `retriever.py`（1-511）—— 混合召回与 RRF
+#### 📍 L3 `retriever.py`（1-510）—— 混合召回与 RRF
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `lexical_score` | 68-90 | 词面打分 |
-| `rewrite_query` | 127-151 | 查询改写（默认关） |
-| `rrf_fuse` | 157-179 | **RRF 融合** |
-| `filter_by_allowed_sources` | 185-209 | 按权限过滤 |
-| `_attach_parent_content` | 226-248 | 父块回捞 |
-| `retrieve` | 251-493 | **主入口** |
-| ├ `_dense_recall` | 300-323 | 向量召回 |
-| ├ `_lexical_recall` | 326-328 | 词面召回 |
-| └ `_rewrite_recall` | 330-344 | 改写召回 |
-| `search` | 496-498 |
-| `retrieval_stats` | 501-511 |
+| `lexical_score` | 67-89 | 词面打分 |
+| `rewrite_query` | 126-150 | 查询改写（默认关） |
+| `rrf_fuse` | 156-178 | **RRF 融合** |
+| `filter_by_allowed_sources` | 184-208 | 按权限过滤 |
+| `_attach_parent_content` | 225-247 | 父块回捞 |
+| `retrieve` | 250-492 | **主入口** |
+| ├ `_dense_recall` | 299-322 | 向量召回 |
+| ├ `_lexical_recall` | 325-327 | 词面召回 |
+| └ `_rewrite_recall` | 329-343 | 改写召回 |
+| `search` | 495-497 |
+| `retrieval_stats` | 500-510 |
 
 **实现原理（小白版）—— 混合召回**：
 
@@ -1130,7 +1138,7 @@ BM25 分则是没有上界的正数。加权求和前必须先归一化，
 RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 跨数据集稳健，这也是 Elasticsearch / OpenSearch 的默认做法。
 
-**词面分还有三层小设计**（`lexical_score` 68-90）：
+**词面分还有三层小设计**（`lexical_score` 67-89）：
 ① 过滤虚词（否则"有/多/少"让所有片段一起冲到满分，排序失效）；
 ② 用**查询覆盖度** `|查询词∩文档词| / |查询词|` 而不是匹配个数，避免长查询占便宜；
 ③ 连续子串精确命中额外 +0.3（"年假"应严格优于只字符重合的"年休假"）。
@@ -1141,7 +1149,7 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 能成立的前提是 `ThreadPoolExecutor.submit` 会**复制提交线程的上下文**，
 所以子线程能读到主线程 set 的值（反过来不行）。
 
-**父块回捞**（`_attach_parent_content` 226-248）只**新增** `parent_content` 字段，
+**父块回捞**（`_attach_parent_content` 225-247）只**新增** `parent_content` 字段，
 绝不动 `content` / `score` / `fused`。所以这个开关对检索指标**零影响**，
 只影响喂给模型的上下文完整度——是"能安全开关的增强"的范本。
 
@@ -1166,19 +1174,19 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 这是**性价比最高的 RAG 优化**：纯函数、零模型调用、零延迟。
 放在 `build_context` 而不是 `retrieve`，是为了不污染供评测和前端展示的客观分数顺序。
 
-#### 📍 L4 `generator.py`（1-402）—— 受控生成
+#### 📍 L4 `generator.py`（1-403）—— 受控生成
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `StreamStats` | 45-79 | 流式统计（含 `truncated` 属性 71-79） |
-| `GenerateResult` | 83-91 | 生成结果 |
-| `build_context` | 97-147 | 拼装上下文（加引用编号） |
-| `estimate_confidence` | 153-175 | **置信度计算** |
-| `extract_cited_indexes` | 181-185 | 抽取答案里用到的引用 |
-| `_format_history` | 191-207 | 格式化历史（**只格式化不裁剪**） |
-| `prepare_generation` | 210-276 | 生成前置：置信度 + 拒答判定 |
-| `stream_answer_tokens` | 279-346 | 流式生成 + 截断检测 |
-| `generate_answer` | 349-397 | 对外主入口 |
+| `StreamStats` | 46-80 | 流式统计（含 `truncated` 属性 71-79） |
+| `GenerateResult` | 84-92 | 生成结果 |
+| `build_context` | 98-148 | 拼装上下文（加引用编号） |
+| `estimate_confidence` | 154-176 | **置信度计算** |
+| `extract_cited_indexes` | 182-186 | 抽取答案里用到的引用 |
+| `_format_history` | 192-208 | 格式化历史（**只格式化不裁剪**） |
+| `prepare_generation` | 211-277 | 生成前置：置信度 + 拒答判定 |
+| `stream_answer_tokens` | 280-347 | 流式生成 + 截断检测 |
+| `generate_answer` | 350-398 | 对外主入口 |
 
 **三个控制点**：
 
@@ -1191,7 +1199,7 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 3. **优雅拒答**：置信度低于 `REFUSE_THRESHOLD`（默认 0.25）且没有工具结果时，
    直接回"知识库中没有找到"，宁可转人工也不硬凑。
 
-**置信度怎么算**（`estimate_confidence` 153-175）：
+**置信度怎么算**（`estimate_confidence` 154-176）：
 拿 Top1 的 RRF 融合分，除以**理论上限** `(稠密权重 + 词面权重) / (RRF_K + 1)`。
 为什么这么算？因为 RRF 分只取决于排名，上限是个常数，
 所以这个比值**跨 embedding 模型可比**——而原始向量分做不到（不同模型尺度不同）。
@@ -1201,7 +1209,7 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 - 词面分 ≥ 0.5 加 0.1（检索确实对上了）
 - 有工具结果加 0.2（确定性业务数据）
 
-**流式统计为什么要拆 `ttft_ms`**（45-79）：
+**流式统计为什么要拆 `ttft_ms`**（46-80）：
 总耗时拆成"首 token 延迟"和"后续逐块产出"，因为**两者慢的根因完全不同**——
 前者是网络或供应商排队，后者是模型吐字速度或输出过长。
 不拆开就只能笼统地说"慢"，无法归因。
@@ -1219,21 +1227,21 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 **设计取舍**：`chat_history` 必须是调用方**已经裁剪好**的窗口，
 这一层只格式化不裁剪。两处都裁剪会让 `SHORT_TERM_WINDOW` 配置静默失效。
 
-#### 📍 L5 `evaluator.py`（1-383）—— 评估
+#### 📍 L5 `evaluator.py`（1-384）—— 评估
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `EvalCase` | 41-56 | 评测用例 |
-| `load_eval_cases` | 69-105 | 加载 YAML 用例 |
-| `run_retrieval_eval` | 116-191 | **检索评测** |
-| `_section_hit` | 194-212 | 章节命中判定 |
-| `filter_by_section` | 215-223 | 按章节过滤 |
-| `score_faithfulness` | 234-247 | **忠实度** |
-| `record_feedback` | 253-286 | 记录一次用户反馈 |
-| `load_feedbacks` | 289-307 | 读取反馈记录 |
-| `feedback_stats` | 310-326 | 反馈统计（好评率） |
-| `build_report` | 332-347 | 汇总报告 |
-| `suggest_improvements` | 350-383 | 改进建议 |
+| `EvalCase` | 42-57 | 评测用例 |
+| `load_eval_cases` | 70-106 | 加载 YAML 用例 |
+| `run_retrieval_eval` | 117-192 | **检索评测** |
+| `_section_hit` | 195-213 | 章节命中判定 |
+| `filter_by_section` | 216-224 | 按章节过滤 |
+| `score_faithfulness` | 235-248 | **忠实度** |
+| `record_feedback` | 254-287 | 记录一次用户反馈 |
+| `load_feedbacks` | 290-308 | 读取反馈记录 |
+| `feedback_stats` | 311-327 | 反馈统计（好评率） |
+| `build_report` | 333-348 | 汇总报告 |
+| `suggest_improvements` | 351-384 | 改进建议 |
 
 **两个检索指标**：
 
@@ -1322,16 +1330,16 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 **流式四级策略**（`_stream` 232-271）：
 正常逐块透传 → 未产出内容前失败可回退整段生成 → 超时不回退 → 已产出部分再失败直接抛（避免内容重复）。
 
-#### 📍 `app/providers/embeddings.py`（1-278）—— 向量化
+#### 📍 `app/providers/embeddings.py`（1-291）—— 向量化
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `LocalHashEmbeddings` | 48-133 | **本地哈希向量**（无 Key 也能跑） |
-| ├ `fit` / `_load_idf` | 98-107 / 72-81 | IDF 训练与加载 |
-| └ `_embed` | 113-127 | 核心向量化 |
-| `APIEmbeddings` | 136-175 | 远程 API |
-| `CachedAPIEmbeddings` | 178-224 | 带缓存的代理 |
-| `get_embeddings` | 230-259 | 工厂（自动降级） |
+| `LocalHashEmbeddings` | 61-146 | **本地哈希向量**（无 Key 也能跑） |
+| ├ `fit` / `_load_idf` | 111-120 / 72-81 | IDF 训练与加载 |
+| └ `_embed` | 126-140 | 核心向量化 |
+| `APIEmbeddings` | 149-188 | 远程 API |
+| `CachedAPIEmbeddings` | 191-237 | 带缓存的代理 |
+| `get_embeddings` | 243-272 | 工厂（自动降级） |
 
 **LocalHashEmbeddings 的原理（小白版）**：
 
@@ -1356,7 +1364,7 @@ IDF 表在全量建索引时训练一次并持久化，查询时复用同一套�
 只够支撑"字面/近义短语重叠"型的企业制度检索。
 它的价值是**保证无 Key 时全链路能跑通**（CI、离线演示）。
 
-**切换机制**（`get_embeddings` 230-259）：
+**切换机制**（`get_embeddings` 243-272）：
 先尝试真实接口并做一次健康检查，失败就自动落到本地哈希并打印 `mode=local-hash`。
 注意 `get_embedding_mode()` 返回的是**实际初始化成功**的模式，不是配置值——
 这样运维能一眼看出当前真正在用哪个。
@@ -1664,18 +1672,18 @@ API 层其实已经取过一次历史了（放在 `GraphState.chat_history` 里�
 
 ### 4.10 通用工具 `app/utils/`
 
-#### 📍 `doc_loader.py`（1-283）—— 文档解析
+#### 📍 `doc_loader.py`（1-298）—— 文档解析
 
 | 组件 | 行号 |
 |---|---|
-| `_table_to_markdown` | 23-48 |
-| `_image_area` | 51-58 |
-| `_ocr_image` | 61-78 |
-| `_extract_page_images` | 81-121 |
-| `_load_pdf_pdfplumber` | 124-169 |
-| `_load_pdf_pypdf` | 172-187 |
-| `_load_pdf` | 190-206 |
-| `load_all_documents` | 220-255 |
+| `_table_to_markdown` | 38-63 |
+| `_image_area` | 66-73 |
+| `_ocr_image` | 76-93 |
+| `_extract_page_images` | 96-136 |
+| `_load_pdf_pdfplumber` | 139-184 |
+| `_load_pdf_pypdf` | 187-202 |
+| `_load_pdf` | 205-221 |
+| `load_all_documents` | 235-270 |
 
 **PDF 三级降级**：pdfplumber（能识别表格并转 Markdown）→
 pypdf（仅文本，表格退化成线性）→ LangChain `PyPDFLoader` 兜底。
@@ -1689,6 +1697,29 @@ pypdf（仅文本，表格退化成线性）→ LangChain `PyPDFLoader` 兜底�
 判定为装饰性图标 / 分隔线 / 水印，直接丢弃。
 为什么必须过滤？不过滤的话，企业 PDF 里的 logo 和分隔线会被当成图片塞进正文，污染检索。
 OCR 有三重降级（开关未开 / 库未装 / 语言包缺失），任一不满足即降级为只记录尺寸位置。
+
+#### 📍 `text.py`（1-52）—— 中文文本处理（虚词表 / 汉字区间的**唯一实现处**）
+
+| 组件 | 行号 |
+|---|---|
+| `CJK_RANGE` | 25 |
+| `CJK_CHAR` | 28 |
+| `CJK_RUN_SPLIT` | 31 |
+| `CJK_STOP` | 38-41 |
+| `cjk_runs` | 44-52 |
+
+**为什么单独成模块**：`app/rag/lexical.py` 与 `app/rag/retriever.py` 曾把同一套中文切分
+**各写一遍**（函数体一字不差、75 字虚词表 sha1 相同），汉字区间还有 `一-鿿` 与
+`\u4e00-\u9fff` 两种写法。收敛到这里是因为 `rag` 与 `providers` 两边都要用，
+而 `utils` 是最内层的通用层——放进 `rag` 会让 `providers → rag` 变成反向依赖，反之同理。
+
+**为什么要剔虚词**：「年假有多少天」里的「有/多/少」会命中任何含「有多少人」的片段，
+「的/了/是」更是几乎出现在每个汉语句子里，会让所有片段的词面分一起冲到 1.0，
+**词面路彻底失去排序能力**。
+
+**⚠️ 一个刻意的例外**：`app/providers/embeddings.py` 只共用「哪些字算中文」，
+**不共用虚词表**。本地哈希向量的用途是给片段定身份，剔虚词等于让全部历史向量重算，
+收益为零——共用的是判据，不是结论。
 
 #### 📍 `cache.py`（1-120）—— 缓存
 
@@ -1991,28 +2022,28 @@ open http://127.0.0.1:8001/static/index.html
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（15934 行）**
+**应用代码 `app/`（16008 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
 | `__init__.py` | 1 | `api/__init__.py` | 1 |
-| `api/chat.py` | 444 | `api/dify.py` | 370 |
-| `api/evaluation.py` | 80 | `api/knowledge.py` | 175 |
+| `api/chat.py` | 461 | `api/dify.py` | 373 |
+| `api/evaluation.py` | 80 | `api/knowledge.py` | 178 |
 | `api/memory.py` | 133 | `api/routing.py` | 110 |
 | `api/test.py` | 33 | `api/workflow.py` | 146 |
 | `config.py` | 744 | `core/__init__.py` | 1 |
 | `core/errors.py` | 28 | `core/llm_factory.py` | 23 |
 | `core/observability.py` | 39 | `core/prompts.py` | 240 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 64 |
-| `core/request_ctx.py` | 213 | `core/router_agent.py` | 414 |
+| `core/request_ctx.py` | 213 | `core/router_agent.py` | 393 |
 | `core/routing/__init__.py` | 96 | `core/routing/anchors.py` | 275 |
-| `core/routing/arbitration.py` | 199 | `core/routing/catalog.py` | 455 |
+| `core/routing/arbitration.py` | 178 | `core/routing/catalog.py` | 455 |
 | `core/routing/derive.py` | 143 | `core/routing/fusion.py` | 443 |
 | `core/routing/gating.py` | 115 | `core/routing/router.py` | 380 |
 | `core/routing/signals.py` | 327 | `core/routing/similarity.py` | 138 |
 | `core/routing/vocabulary.py` | 114 | `core/self_check.py` | 347 |
-| `core/source_acl.py` | 48 | `core/sub_agents.py` | 355 |
-| `core/tool_agent.py` | 712 | `core/tracing.py` | 161 |
+| `core/source_acl.py` | 48 | `core/sub_agents.py` | 334 |
+| `core/tool_agent.py` | 694 | `core/tracing.py` | 161 |
 | `db/__init__.py` | 1 | `db/enterprise_db.py` | 170 |
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
 | `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
@@ -2022,17 +2053,17 @@ open http://127.0.0.1:8001/static/index.html
 | `memory/consolidator.py` | 154 | `memory/dream.py` | 148 |
 | `memory/long_term.py` | 178 | `memory/short_term.py` | 179 |
 | `memory/store.py` | 331 | `providers/__init__.py` | 53 |
-| `providers/base.py` | 49 | `providers/embeddings.py` | 278 |
+| `providers/base.py` | 49 | `providers/embeddings.py` | 291 |
 | `providers/llm.py` | 285 | `providers/rerank.py` | 102 |
-| `rag/__init__.py` | 68 | `rag/evaluator.py` | 383 |
-| `rag/generator.py` | 402 | `rag/indexer.py` | 595 |
-| `rag/lexical.py` | 266 | `rag/parent_store.py` | 139 |
-| `rag/prepare.py` | 200 | `rag/reorder.py` | 28 |
-| `rag/rerank.py` | 8 | `rag/retriever.py` | 511 |
+| `rag/__init__.py` | 68 | `rag/evaluator.py` | 384 |
+| `rag/generator.py` | 403 | `rag/indexer.py` | 595 |
+| `rag/lexical.py` | 258 | `rag/parent_store.py` | 139 |
+| `rag/prepare.py` | 207 | `rag/reorder.py` | 28 |
+| `rag/rerank.py` | 8 | `rag/retriever.py` | 510 |
 | `rag/structure.py` | 334 | `static/gen_favicon.py` | 148 |
 | `tools/__init__.py` | 1 | `tools/sqlite_tools.py` | 255 |
 | `utils/__init__.py` | 1 | `utils/cache.py` | 120 |
-| `utils/doc_loader.py` | 283 | `utils/embedding.py` | 22 |
+| `utils/doc_loader.py` | 298 | `utils/embedding.py` | 22 |
 | `utils/logger.py` | 74 | `utils/validator.py` | 150 |
 | `tests/__init__.py` | 1 | `tests/conftest.py` | 85 |
 | `tests/deadcode_allowlist.py` | 92 | `tests/fakes.py` | 102 |
@@ -2087,7 +2118,7 @@ python scripts/verify_doc_linenos.py
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:126-139` |
 | 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（495 行）、`app/config.py`（744 行） |
 | 9 | 区域行号表（裸区间） | `287-342` 向量数据库配置 |
-| 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:231-306` |
+| 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:232-307` |
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
 | 12 | **区间式引用**（符号 + 括号 / 裸文件名 + 冒号 / 表格行首文件名 + 描述里匿名区间） | `state.py`：`GraphState`（50-126）、`config.py:370-379` |
 | 13 | **config 分区表**（真值来自源码 `# ====` 横幅，**不在 AST 里**） | `47-54` 项目路径、`678-744` 服务配置 |

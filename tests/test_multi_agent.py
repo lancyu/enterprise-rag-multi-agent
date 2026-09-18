@@ -228,7 +228,7 @@ def test_local_fast_path_answers_without_touching_the_model(monkeypatch):
     def _must_not_be_called():
         raise AssertionError("本地快通道命中时不得调用路由模型")
 
-    monkeypatch.setattr(router_agent, "_default_model", _must_not_be_called)
+    monkeypatch.setattr(router_agent, "default_model", _must_not_be_called)
 
     decision = route_query("你好")
 
@@ -249,7 +249,7 @@ def test_local_fast_path_leaves_the_gray_zone_to_the_model(monkeypatch):
     stub = _TextModel(
         json.dumps({"route": SCENE_COMPLEX_RAG, "reason": "测试", "confidence": 0.9})
     )
-    monkeypatch.setattr(router_agent, "_default_model", lambda: stub)
+    monkeypatch.setattr(router_agent, "default_model", lambda: stub)
 
     decision = route_query("请帮我分析一下当前国际形势对我们部门明年预算的影响")
 
@@ -344,13 +344,13 @@ def test_tool_agent_switches_intent_type_within_the_same_scene(monkeypatch, busi
     state = create_initial_state(user_query="我的年假还剩几天", user_id="u1", session_id="s")
 
     # ① 反问用户：拿不到证据 → 直答出口
-    monkeypatch.setattr(agent_mod, "_default_model",
+    monkeypatch.setattr(agent_mod, "default_model",
                         lambda: RecordingModel(["请问你叫什么名字？我帮你查。", []]))
     direct = nodes.tool_node(state)
     assert direct["intent_type"] == "direct"
 
     # ② 取到证据：交 L4 → 证据出口
-    monkeypatch.setattr(agent_mod, "_default_model",
+    monkeypatch.setattr(agent_mod, "default_model",
                         lambda: RecordingModel([
                             {"name": "query_leave_balance", "args": {"employee_id": "E1001"}},
                             [],
@@ -430,7 +430,7 @@ def test_out_of_scope_is_intercepted_before_any_sub_agent_runs(monkeypatch):
     monkeypatch.setattr(nodes, "run_smalltalk_agent", boom)
     monkeypatch.setattr(nodes, "run_tool_agent", boom)
     monkeypatch.setattr(sub_agents, "retrieve_knowledge_docs", boom)
-    monkeypatch.setattr(agent_mod, "_default_model", boom)
+    monkeypatch.setattr(agent_mod, "default_model", boom)
 
     out = enterprise_workflow.invoke(
         create_initial_state(user_query="明天天气怎么样", user_id="u1", session_id="s")
@@ -460,7 +460,7 @@ def test_smalltalk_never_touches_retrieval_or_tools(monkeypatch):
 
     monkeypatch.setattr(sub_agents, "retrieve_knowledge_docs", boom)
     monkeypatch.setattr(agent_mod, "run_tool_agent", boom)
-    monkeypatch.setattr(agent_mod, "_default_model", boom)
+    monkeypatch.setattr(agent_mod, "default_model", boom)
     monkeypatch.setattr("app.providers.llm.get_chat_model", boom)
 
     out = nodes.smalltalk_node(create_initial_state(user_query="你好", session_id="s"))
@@ -575,7 +575,7 @@ def test_complex_rag_always_searches_the_original_query(monkeypatch, _spy_retrie
     """
     from app.core import sub_agents
 
-    monkeypatch.setattr(sub_agents, "_default_model",
+    monkeypatch.setattr(sub_agents, "default_model",
                         lambda: _TextModel('["年假的天数规定", "调休的天数规定"]'))
     answer = sub_agents.run_complex_rag_agent("对比年假和调休的区别")
 
@@ -592,7 +592,7 @@ def test_complex_rag_dedupes_and_keeps_the_higher_score(monkeypatch):
     """
     from app.core import sub_agents
 
-    monkeypatch.setattr(sub_agents, "_default_model",
+    monkeypatch.setattr(sub_agents, "default_model",
                         lambda: _TextModel('["A", "B"]'))
 
     def fake(query, top_k=None, allowed_sources=None):
@@ -633,7 +633,7 @@ def test_complex_rag_caps_merged_docs(monkeypatch):
     """合并后条数受配置约束——它决定 L4 上下文的长度。"""
     from app.core import sub_agents
 
-    monkeypatch.setattr(sub_agents, "_default_model", lambda: _TextModel('["A", "B"]'))
+    monkeypatch.setattr(sub_agents, "default_model", lambda: _TextModel('["A", "B"]'))
     monkeypatch.setattr(
         sub_agents, "retrieve_knowledge_docs",
         lambda q, top_k=None, allowed_sources=None: [
@@ -649,7 +649,7 @@ def test_single_subquery_failure_is_a_soft_warning_not_a_failure(monkeypatch):
     """个别子查询失败 → 跳过并留痕；其余子查询仍然给出答案。"""
     from app.core import sub_agents
 
-    monkeypatch.setattr(sub_agents, "_default_model", lambda: _TextModel('["A", "B"]'))
+    monkeypatch.setattr(sub_agents, "default_model", lambda: _TextModel('["A", "B"]'))
 
     def fake(query, top_k=None, allowed_sources=None):
         if query == "A":
@@ -668,7 +668,7 @@ def test_all_subqueries_failing_is_degraded_not_fatal(monkeypatch):
     """全部子查询失败 → 与简单 RAG 同款降级：交 L4 诚实作答，**不抛**。"""
     from app.core import sub_agents
 
-    monkeypatch.setattr(sub_agents, "_default_model", lambda: _TextModel('["A", "B"]'))
+    monkeypatch.setattr(sub_agents, "default_model", lambda: _TextModel('["A", "B"]'))
 
     def boom(*_a, **_kw):
         raise RuntimeError("向量库连接超时")
@@ -694,7 +694,7 @@ def test_tool_agent_asks_back_instead_of_fabricating(monkeypatch, business_db):
     from app.core import tool_agent as agent_mod
     from app.graph import nodes
 
-    monkeypatch.setattr(agent_mod, "_default_model",
+    monkeypatch.setattr(agent_mod, "default_model",
                         lambda: RecordingModel(["请把你的姓名或工号告诉我，我帮你查假期余额。", []]))
     state = create_initial_state(user_query="我的年假还剩几天", user_id="u1", session_id="s")
 
@@ -716,7 +716,7 @@ def test_ask_back_survives_a_rejected_call(monkeypatch, business_db):
     from app.core import tool_agent as agent_mod
     from app.graph import nodes
 
-    monkeypatch.setattr(agent_mod, "_default_model", lambda: RecordingModel([
+    monkeypatch.setattr(agent_mod, "default_model", lambda: RecordingModel([
         {"name": "query_leave_balance", "args": {}},          # 缺 employee_id → 被护栏拒绝
         "请把你的工号告诉我，我帮你查假期余额。",              # ← 改口追问
         [],
@@ -739,7 +739,7 @@ def test_closing_remark_is_discarded_once_evidence_exists(monkeypatch, business_
     from app.core import tool_agent as agent_mod
     from app.graph import nodes
 
-    monkeypatch.setattr(agent_mod, "_default_model", lambda: RecordingModel([
+    monkeypatch.setattr(agent_mod, "default_model", lambda: RecordingModel([
         {"name": "query_leave_balance", "args": {"employee_id": "E1001"}},
         "你的年假还有 5 天。",                                # ← 这句必须被丢掉
         [],
@@ -758,7 +758,7 @@ def test_tool_generation_without_function_calling_is_a_soft_landing(monkeypatch)
     from app.core import tool_agent as agent_mod
     from app.graph import nodes
 
-    monkeypatch.setattr(agent_mod, "_default_model",
+    monkeypatch.setattr(agent_mod, "default_model",
                         lambda: RecordingModel([[]], bind_error=RuntimeError("端点不支持 tools")))
     out = nodes.tool_node(create_initial_state(user_query="年假多少天", user_id="u1", session_id="s"))
 
@@ -800,7 +800,7 @@ def test_business_tool_failure_still_reports_human(monkeypatch, business_db):
             raise RuntimeError("业务库 502")
 
     monkeypatch.setitem(agent_mod._TOOLS_BY_NAME, "query_leave_balance", _BoomTool())
-    monkeypatch.setattr(agent_mod, "_default_model", lambda: RecordingModel([
+    monkeypatch.setattr(agent_mod, "default_model", lambda: RecordingModel([
         {"name": "query_leave_balance", "args": {"employee_id": "E1001"}},
         [],
     ]))

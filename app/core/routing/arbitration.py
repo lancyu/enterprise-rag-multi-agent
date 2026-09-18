@@ -45,6 +45,7 @@ import re
 from typing import Any, Optional, Sequence
 
 from app import config
+from app.core.llm_access import content_of, default_model
 from app.core.prompts import render as render_prompt
 from app.core.routing import catalog
 from app.core.routing.fusion import Candidate, call_with_timeout, soft_warn
@@ -157,14 +158,14 @@ def choose(
 
     limit = config.ROUTE_ARBITRATION_TIMEOUT_MS if timeout_ms is None else timeout_ms
     try:
-        chat = model or _default_model()
+        chat = model or default_model()
         prompt = render_prompt(
             "route_arbitration",
             choices=render_choices(candidates),
             user_query=query,
         )
         reply = call_with_timeout(lambda: chat.invoke(prompt), limit)
-        raw = _content_of(reply)
+        raw = content_of(reply)
         picked = parse_choice(raw, candidates)
         if picked is None:
             logger.warning("灰区仲裁输出无法解析，走保守兜底：%r", raw[:120])
@@ -175,25 +176,3 @@ def choose(
         # 在日志里与"灰区恰好变多"完全同形，不可查。
         soft_warn(f"灰区仲裁失败，走保守兜底：{type(exc).__name__}: {exc}")
         return None
-
-
-def _content_of(message: Any) -> str:
-    """取出消息的纯文本内容（``content`` 可能是分块列表，需拼接）。"""
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
-                parts.append(str(block.get("text", "")))
-        return "".join(parts).strip()
-    return ""
-
-
-def _default_model():
-    from app.providers.llm import get_chat_model
-
-    return get_chat_model()

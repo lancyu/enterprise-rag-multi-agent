@@ -563,7 +563,7 @@ def test_chained_calls_across_rounds(business_db):
 def _patch_model(monkeypatch, model):
     from app.core import tool_agent as agent_mod
 
-    monkeypatch.setattr(agent_mod, "_default_model", lambda: model)
+    monkeypatch.setattr(agent_mod, "default_model", lambda: model)
 
 
 def test_tool_node_direct_sets_answer_and_skips_generation(monkeypatch):

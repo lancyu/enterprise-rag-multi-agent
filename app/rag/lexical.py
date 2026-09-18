@@ -9,9 +9,13 @@
     BM25 多了文档长度归一化（参数 b），避免长片段仅因字数多就占便宜。
     标准库即可实现，不引入 jieba / rank_bm25 依赖。
 
-分词复用 retriever._cjk_runs 的「连续中文串 + bigram」思路：
+分词复用 ``app.utils.text.cjk_runs`` 的「连续中文串 + bigram」思路：
     中文无空格，直接按字符集切词会退化成字符倒排，故拆成连续串后再叠 bigram；
     英文/数字按 ``\\w+`` 小写化，与 retriever._latin_lexical_score 保持一致。
+
+    虚词表（``CJK_STOP``）与汉字区间也**只在 ``app.utils.text`` 定义一次**——
+    此前本模块与 retriever 各抄一份，注释里还写着「与 retriever._CJK_STOP 一致」，
+    等于用注释记录了重复。两处各改一遍的最终结局必然是分叉。
 
 索引更新采用「增量」而非全量重建：
     add / remove 只增删受影响文档的倒排项，删除文档时无需重建整个索引。
@@ -27,6 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app import config
 from app.utils.logger import logger
+from app.utils.text import CJK_STOP, cjk_runs
 
 # BM25 参数：k1 控制词频饱和，b 控制文档长度归一化强度（0 不归一化，1 全归一化）。
 # 从 config 读取（config.LEXICAL_BM25_K1 / LEXICAL_BM25_B），使 BM25 调参可通过 .env 生效，
@@ -34,20 +39,7 @@ from app.utils.logger import logger
 _K1: float = getattr(config, "LEXICAL_BM25_K1", 1.5)
 _B: float = getattr(config, "LEXICAL_BM25_B", 0.75)
 
-_CJK_CHAR = re.compile(r"[一-鿿]")
 _LATIN = re.compile(r"[a-z0-9]{2,}")
-
-# 中文高频虚词：不计入索引（与 retriever._CJK_STOP 一致），否则"的/了/是"会把
-# 所有文档的倒排表撑爆，且失去区分度。
-_CJK_STOP = set(
-    "的了是有着和在就都而我你他她它们这那吗呢吧啊很太最更也很还再又只才不没无"
-    "给让向往把被对从到以为及其或与个们多少怎如何什么可以请问谢谢"
-)
-
-
-def _cjk_runs(text: str) -> List[str]:
-    """提取连续中文串，如「年假有多少天」→ ['年假', '有多少天']。"""
-    return [run for run in re.split(r"[^一-鿿]+", text) if len(run) >= 2]
 
 
 def _tokenize(text: str) -> List[str]:
@@ -60,8 +52,8 @@ def _tokenize(text: str) -> List[str]:
     """
     tokens: List[str] = []
     lowered = text.lower()
-    for run in _cjk_runs(lowered):
-        meaningful = [ch for ch in run if ch not in _CJK_STOP]
+    for run in cjk_runs(lowered):
+        meaningful = [ch for ch in run if ch not in CJK_STOP]
         if not meaningful:
             continue
         tokens.extend(meaningful)  # 单字

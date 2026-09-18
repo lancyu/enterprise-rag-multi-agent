@@ -23,6 +23,7 @@ from typing import Any, Dict, Iterable, List, Set
 from langchain_core.documents import Document
 
 from app import config
+from app.utils.doc_loader import SUPPORTED_SUFFIX, file_name
 from app.utils.logger import logger
 
 # ---------------------------------------------------------------------------
@@ -91,8 +92,14 @@ def is_near_duplicate(a: str, b: str, threshold: float = NEAR_DUP_THRESHOLD) -> 
 # 元数据注入
 # ---------------------------------------------------------------------------
 def _infer_file_type(source: str) -> str:
+    """从文件名后缀推断 file_type 元数据。
+
+    后缀白名单只在 `app.utils.doc_loader.SUPPORTED_SUFFIX` 定义一次——
+    此前这里另抄了一个元组、`api/knowledge.py` 又抄了一个不带点的集合，
+    加一种格式只改其中一处时，另外两条路径会静默地拒绝它。
+    """
     lowered = (source or "").lower()
-    for ext in (".pdf", ".md", ".markdown", ".txt"):
+    for ext in sorted(SUPPORTED_SUFFIX):
         if lowered.endswith(ext):
             return ext.lstrip(".")
     return "unknown"
@@ -109,7 +116,7 @@ def enrich_metadata(doc: Document) -> Document:
     source = str(meta.get("source", "unknown"))
     meta.setdefault("source", source)
     meta["file_type"] = _infer_file_type(source)
-    meta["file_name"] = source.split("/")[-1].split("\\")[-1]
+    meta["file_name"] = file_name(source)
     meta["char_count"] = len(content)
     meta["fingerprint"] = content_fingerprint(content)
     return Document(page_content=content, metadata=meta)

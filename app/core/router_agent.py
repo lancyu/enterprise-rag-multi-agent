@@ -67,6 +67,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from app import config
+from app.core.llm_access import content_of, default_model
 from app.core.prompts import render as render_prompt
 from app.core.routing import match_intent
 from app.core.routing.catalog import (
@@ -271,7 +272,7 @@ def route_query(
         return _fallback_route(query, "未配置真实模型（离线模式）")
 
     try:
-        chat = model or _default_model()
+        chat = model or default_model()
         prompt = render_prompt(
             "router",
             chat_history=_format_history(chat_history),
@@ -279,7 +280,7 @@ def route_query(
         )
         with span("router") as s:
             reply = chat.invoke(prompt)
-            raw = _content_of(reply)
+            raw = content_of(reply)
             s.attrs["raw_chars"] = len(raw)
         parsed = _parse_route(raw)
         if parsed is None:
@@ -354,22 +355,6 @@ def _format_history(chat_history: Optional[List[Dict[str, str]]], max_turns: int
     return "\n".join(lines) or "（无）"
 
 
-def _content_of(message: Any) -> str:
-    """取出消息的纯文本内容（``content`` 可能是分块列表，需拼接）。"""
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
-                parts.append(str(block.get("text", "")))
-        return "".join(parts).strip()
-    return ""
-
-
 # ---------------------------------------------------------------------------
 # 确定性兜底
 # ---------------------------------------------------------------------------
@@ -406,9 +391,3 @@ def _fallback_route(
         raw=raw,
         error=error,
     )
-
-
-def _default_model():
-    from app.providers.llm import get_chat_model
-
-    return get_chat_model()

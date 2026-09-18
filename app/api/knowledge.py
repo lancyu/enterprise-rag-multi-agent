@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from app import config
 from app.core.rag_engine import add_document, build_index, delete_document, get_stats, search
-from app.utils.doc_loader import list_data_files
+from app.utils.doc_loader import SUPPORTED_SUFFIX, file_name, list_data_files
 from app.utils.logger import logger
 from app.utils.validator import KnowledgeSearchRequest, KnowledgeUploadRequest, sanitize_filename
 
@@ -82,7 +82,10 @@ async def knowledge_upload_file(request: Request, file: UploadFile = File(...)) 
     if not filename:
         raise HTTPException(status_code=400, detail="文件名无效")
     suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if suffix not in {"pdf", "md", "markdown", "txt"}:
+    # 白名单只在 `app.utils.doc_loader.SUPPORTED_SUFFIX` 定义一次（带点）。
+    # 此前这里另抄了一份**不带点**的集合，加上 prepare.py 的元组共三处——
+    # 加一种格式只改其中一处时，另外两条路径会静默地拒绝它。
+    if f".{suffix}" not in SUPPORTED_SUFFIX:
         raise HTTPException(status_code=400, detail="仅支持 PDF / Markdown / TXT 格式")
 
     # 第一道闸：Content-Length 预检，超限请求连 body 都不读
@@ -153,7 +156,7 @@ async def knowledge_search(req: KnowledgeSearchRequest) -> dict:
         "code": 0,
         "query": req.query,
         "hits": [
-            {"content": h["content"], "source": h["source"].split("/")[-1], "score": h["score"], "fallback": h["fallback"]}
+            {"content": h["content"], "source": file_name(h["source"]), "score": h["score"], "fallback": h["fallback"]}
             for h in hits
         ],
     }

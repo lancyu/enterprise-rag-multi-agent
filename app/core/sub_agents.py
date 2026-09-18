@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app import config
+from app.core.llm_access import content_of, default_model
 from app.core.prompts import render as render_prompt
 from app.core.rag_engine import retrieve_knowledge_docs
 from app.core.tracing import span
@@ -203,9 +204,9 @@ def decompose_query(query: str, model: Optional[Any] = None) -> List[str]:
         return [text]
 
     try:
-        chat = model or _default_model()
+        chat = model or default_model()
         reply = chat.invoke(render_prompt("decompose", user_query=text))
-        sub_queries = _parse_subqueries(_content_of(reply))
+        sub_queries = _parse_subqueries(content_of(reply))
     except Exception as exc:  # noqa: BLE001
         logger.warning("问题拆解失败，退化为单次检索：%s", exc)
         return [text]
@@ -331,25 +332,3 @@ def _dedupe_keep_order(items: List[str]) -> List[str]:
         seen.add(text)
         out.append(text)
     return out
-
-
-def _content_of(message: Any) -> str:
-    """取出消息的纯文本内容（``content`` 可能是分块列表，需拼接）。"""
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
-                parts.append(str(block.get("text", "")))
-        return "".join(parts).strip()
-    return ""
-
-
-def _default_model():
-    from app.providers.llm import get_chat_model
-
-    return get_chat_model()

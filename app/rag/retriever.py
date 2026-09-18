@@ -28,8 +28,10 @@ from app import config
 from app.core.request_ctx import get_query_vector, set_query_vector
 from app.db.vector_db import get_vector_store
 from app.rag.lexical import chunk_key, get_lexical_index
+from app.utils.doc_loader import file_name
 from app.utils.embedding import get_embeddings
 from app.utils.logger import logger, preview
+from app.utils.text import CJK_CHAR, CJK_STOP, cjk_runs
 
 # ---------------------------------------------------------------------------
 # 可调参数
@@ -39,30 +41,27 @@ DENSE_WEIGHT: float = getattr(config, "DENSE_WEIGHT", 0.7)   # 向量路权重
 LEXICAL_WEIGHT: float = getattr(config, "LEXICAL_WEIGHT", 0.3)  # 词面路权重
 QUERY_REWRITE_ENABLED: bool = getattr(config, "QUERY_REWRITE_ENABLED", False)
 
-# 中文检索词面匹配：汉字按「字符集合包含」判定（兼容「年假」查询命中「年休假」片段）
-_CJK_CHAR = re.compile(r"[一-鿿]")
 _LATIN = re.compile(r"[a-z0-9]{2,}")
 
 # 词面分低于此值视为「未命中」，不参与词面路排名
 _LEXICAL_FLOOR = 0.01
 
 
+def rrf_upper_bound() -> float:
+    """RRF 融合分的**理论上限** ``(w_dense + w_lex) / (k + 1)``。
+
+    任何「把 fused 归一化到 0~1」的地方都必须除这个值，否则归一化结果会随
+    权重/常数变化而漂移。此前 ``app/api/dify.py`` 与 ``app/rag/generator.py``
+    各算了一遍同一个公式——两处各算一次，改权重时就会只有一处跟着变，
+    归一化后的分数于是跨接口不一致（Dify 侧表现为「阈值一调就永远检索不到」）。
+    """
+    return (DENSE_WEIGHT + LEXICAL_WEIGHT) / (RRF_K + 1)
+
+
 # ---------------------------------------------------------------------------
 # 词面召回打分
 # ---------------------------------------------------------------------------
-def _cjk_runs(text: str) -> List[str]:
-    """提取连续中文串，如「年假有多少天」→ ['年假', '有多少天']。"""
-    return [run for run in re.split(r"[^一-鿿]+", text) if len(run) >= 2]
-
-
-# 中文高频虚词：不计入词面匹配。
-# 这是区分度的关键——若不剔除，「年假有多少天」的「有/多/少」会命中任何
-# 含「有多少人」的片段，「的/了/是」更是几乎出现在每个汉语句子里，
-# 会让所有片段的词面分一起冲到 1.0，词面路彻底失去排序能力。
-_CJK_STOP = set(
-    "的了是有着和在就都而我你他她它们这那吗呢吧啊很太最更也很还再又只才不没无"
-    "给让向往把被对从到以为及其或与个们多少怎如何什么可以请问谢谢"
-)
+# 汉字区间与虚词表只在 ``app.utils.text`` 定义一次（本模块与 lexical.py 曾各抄一份）。
 
 
 def lexical_score(query: str, content: str) -> float:
@@ -92,22 +91,22 @@ def lexical_score(query: str, content: str) -> float:
 
 def _cjk_lexical_score(query: str, content: str) -> float:
     """中文词面分：实义字符覆盖度 + 连续子串精确奖励。"""
-    q_raw = set(_CJK_CHAR.findall(query.lower()))
+    q_raw = set(CJK_CHAR.findall(query.lower()))
     if not q_raw:
         return 0.0
-    q_chars = q_raw - _CJK_STOP
+    q_chars = q_raw - CJK_STOP
     # 过滤后不足 2 字（查询本身几乎全是虚词），回退到全集，避免分母过小放大噪声
     if len(q_chars) < 2:
         q_chars = q_raw
 
-    c_chars = set(_CJK_CHAR.findall(content))
+    c_chars = set(CJK_CHAR.findall(content))
     matched = q_chars & c_chars
     if len(matched) < 2:
         return 0.0
 
     coverage = len(matched) / len(q_chars)
     c_lower = content.lower()
-    bonus = 0.3 if any(run in c_lower for run in _cjk_runs(query.lower())) else 0.0
+    bonus = 0.3 if any(run in c_lower for run in cjk_runs(query.lower())) else 0.0
     return min(1.0, coverage + bonus)
 
 
@@ -487,7 +486,7 @@ def retrieve(
     if results:
         logger.info(
             "L3 检索完成：返回 %d 条 | Top1 来源=%s vec=%.4f lex=%.2f fused=%.4f",
-            len(results), results[0]["source"].split("/")[-1],
+            len(results), file_name(results[0]["source"]),
             results[0]["score"], results[0]["lexical"], results[0]["fused"],
         )
     return results

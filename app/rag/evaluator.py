@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 
 from app import config
 from app.core.errors import EvalCaseInvalid
+from app.utils.doc_loader import file_name
 from app.utils.logger import logger
 
 FEEDBACK_FILE: Path = Path(getattr(config, "FEEDBACK_FILE", config.LOG_DIR / "feedback.jsonl"))
@@ -168,7 +169,7 @@ def run_retrieval_eval(
                 "hit_rank": hit_rank,
                 "reciprocal_rank": round(rr, 3),
                 "section_hit": section_hit if case.expect_section else None,
-                "top_sources": [str(d.get("source", "")).split("/")[-1] for d in docs[:3]],
+                "top_sources": [file_name(str(d.get("source", ""))) for d in docs[:3]],
                 "top_score": docs[0].get("score") if docs else None,
                 "top_lexical": docs[0].get("lexical") if docs else None,
                 "elapsed_ms": elapsed,

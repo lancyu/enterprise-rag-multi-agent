@@ -95,6 +95,10 @@ from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 
 from app import config
+# `content_of` / `default_model` 的唯一实现在 `app.core.llm_access`。
+# **刻意不加 `as _xxx` 别名**：死代码门禁要求「真有调用点」，而别名导入它看不穿
+# （`ast.ImportFrom` 的 asname 不产生 `Name(Load)`），会把这俩判成死代码。
+from app.core.llm_access import content_of, default_model
 from app.core.prompts import get as get_prompt
 from app.core.request_ctx import (
     add_tool_result,
@@ -573,7 +577,7 @@ def _decide(
     steps_limit = max_steps if max_steps is not None else config.TOOL_AGENT_MAX_STEPS
     decision = ToolDecision()
 
-    chat = model or _default_model()
+    chat = model or default_model()
     try:
         bound = chat.bind_tools(list(AGENT_TOOLS))
     except NotImplementedError:
@@ -594,7 +598,7 @@ def _decide(
             # 正文只在这里取一次：下面的回捞、废弃计数、直答出口用的都是它。
             # （回捞命中时 reply 会被重建成空正文，但那条路径下 calls 必非空，
             #  正文不会再被消费，故此处的取值与重建之后再取等价。）
-            content = _content_of(reply)
+            content = content_of(reply)
             if not calls:
                 # 模型把工具调用写成了正文 → 回捞（见 parse_text_tool_calls
                 # 的说明：这是实测到的模型/端点行为，不处理会静默降级成直答）。
@@ -688,25 +692,3 @@ def _decide(
 
     logger.info("Agent 达到最大决策轮数 %d，转入受控生成", steps_limit)
     return decision
-
-
-def _content_of(message: Any) -> str:
-    """取出消息的纯文本内容（``content`` 可能是分块列表，需拼接）。"""
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, str):
-                parts.append(block)
-            elif isinstance(block, dict) and block.get("type") == "text":
-                parts.append(str(block.get("text", "")))
-        return "".join(parts).strip()
-    return ""
-
-
-def _default_model():
-    from app.providers.llm import get_chat_model
-
-    return get_chat_model()
