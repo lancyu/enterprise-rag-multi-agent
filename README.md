@@ -27,7 +27,7 @@
 | 无登录态设计 | 服务端**没有登录态**：`user_id` 只用于隔离长期记忆，不参与任何鉴权，也没有工具会读它。工号只能来自用户原话或工具返回值——正常路径下由 `find_employee_by_name` 换取，模型不得编造。遇到「**我的**年假还剩几天」这类问法，正确行为是向用户索要姓名或工号 |
 | 多轮对话记忆 | 会话级上下文，自动裁剪最近 10 轮，24 小时自动过期 |
 | 可视化面板 | 全新设计系统（靛紫品牌色 / 侧边栏布局 / 移动端响应式）：智能对话（流式输出/引用溯源/场景徽章/反馈）/ 知识库管理 / 工作流引擎 / 记忆系统 / 评估迭代 / 服务自测六大模块 |
-| 全链路自测 | 启动执行本地轻量自检（9 项，不真实调用模型），深度检查（真实调用 LLM/Embedding）经 `/test/all` 手动触发；另提供 539 项 pytest 回归（含 80 项多 Agent 架构级用例） |
+| 全链路自测 | 启动执行本地轻量自检（9 项，不真实调用模型），深度检查（真实调用 LLM/Embedding）经 `/test/all` 手动触发；另提供 544 项 pytest 回归（含 80 项多 Agent 架构级用例） |
 
 ---
 
@@ -108,7 +108,7 @@ docker compose exec app python scripts/check_vector_db.py
 ### 运行测试
 
 ```bash
-# 主回归套件（539 项，纯 pytest，不需要起服务）
+# 主回归套件（544 项，纯 pytest，不需要起服务）
 pytest                                   # 全量
 pytest tests/test_multi_agent.py -q      # 只跑多 Agent 架构级用例（80 项）
 pytest -k tool_agent                     # 按名字筛选
@@ -194,8 +194,8 @@ langgraph-enterprise-bot/
 │   │   └── rerank.py           #   可选 cross-encoder 精排
 │   └── static/index.html       # 前端 SPA 可视化面板
 ├── data/                       # 企业知识库原始文档 + enterprise.db（SQLite 业务数据）
-├── tests/                      # pytest 回归套件（344 项）
-│   ├── test_multi_agent.py     #   多 Agent 架构级用例（76 项，守"谁来做决定"）
+├── tests/                      # pytest 回归套件（544 项）
+│   ├── test_multi_agent.py     #   多 Agent 架构级用例（80 项，守"谁来做决定"）
 │   ├── test_sqlite_tools.py    #   3 个只读工具 + 只读强制 + 边界情形
 │   └── test_service.py         #   端到端脚本（4 阶段 9 项，需起服务）
 ├── docs/                       # 设计文档与事故复盘（multi-agent-architecture.md 为当前架构权威）

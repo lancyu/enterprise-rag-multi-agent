@@ -2096,12 +2096,13 @@ open http://127.0.0.1:8001/static/index.html
 
 > ⚠️ 访问本机服务时若走系统代理会拿到 502，加 `--noproxy '*'`。
 
-### 6.2 测试与质量门禁（五道）
+### 6.2 测试与质量门禁（六道）
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **539 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **544 passed** |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
+| **分层依赖契约** | `pytest tests/test_layering.py -q` | 通过（下层不得 import 上层）；契约定义在 `pyproject.toml` 的 `[tool.importlinter]` |
 | 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（6 项发现 = 豁免清单 6 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
@@ -2193,17 +2194,17 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 449 |
 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
 | `tests/test_fixes_assessment.py` | 252 | `tests/test_infra.py` | 224 |
-| `tests/test_memory_pipeline.py` | 197 | `tests/test_meta_align.py` | 132 |
-| `tests/test_multi_agent.py` | 953 | `tests/test_parent_chunk.py` | 112 |
-| `tests/test_pdf_image.py` | 97 | `tests/test_rag.py` | 204 |
-| `tests/test_routing_funnel.py` | 1413 | `tests/test_self_check.py` | 60 |
-| `tests/test_service.py` | 247 | `tests/test_short_term_symmetry.py` | 284 |
-| `tests/test_soft_warnings.py` | 253 | `tests/test_soul_write.py` | 124 |
-| `tests/test_span_tree_smoke.py` | 264 | `tests/test_sqlite_tools.py` | 258 |
-| `tests/test_structure.py` | 203 | `tests/test_structure_chunking.py` | 178 |
-| `tests/test_tool_agent.py` | 720 | `tests/test_vector_store_backends.py` | 381 |
-| `tests/test_upload_rebuild_alignment.py` | 209 | | |
-| `tests/test_trace_mask.py` | 504 | | |
+| `tests/test_layering.py` | 186 | `tests/test_memory_pipeline.py` | 197 |
+| `tests/test_meta_align.py` | 132 | `tests/test_multi_agent.py` | 953 |
+| `tests/test_parent_chunk.py` | 112 | `tests/test_pdf_image.py` | 97 |
+| `tests/test_rag.py` | 204 | `tests/test_routing_funnel.py` | 1413 |
+| `tests/test_self_check.py` | 60 | `tests/test_service.py` | 247 |
+| `tests/test_short_term_symmetry.py` | 284 | `tests/test_soft_warnings.py` | 253 |
+| `tests/test_soul_write.py` | 124 | `tests/test_span_tree_smoke.py` | 264 |
+| `tests/test_sqlite_tools.py` | 258 | `tests/test_structure.py` | 203 |
+| `tests/test_structure_chunking.py` | 178 | `tests/test_tool_agent.py` | 720 |
+| `tests/test_trace_mask.py` | 504 | `tests/test_upload_rebuild_alignment.py` | 209 |
+| `tests/test_vector_store_backends.py` | 381 | | |
 | `scripts/baseline_snapshot.py` | 133 | `scripts/check_vector_db.py` | 307 |
 | `scripts/chunk_metrics.py` | 171 | `scripts/chunking_ab.py` | 326 |
 | `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
@@ -2217,7 +2218,7 @@ open http://127.0.0.1:8001/static/index.html
 - **知识库语料 `data/`**：12 个文件（TXT / MD / PDF），切分后 176 个片段
 - **配置文件**：`.env`（实际）、`.env.example`（模板）
 - **部署**：`Dockerfile`（41 行，`WITH_VECTOR_CLIENTS` 构建参数控制是否装向量库客户端）、`docker-compose.yml`（167 行，含可选 Milvus Standalone 三容器）
-- **依赖**：`requirements.txt`（55 行）、`requirements-vector.txt`（29 行，向量库客户端按需装）、`requirements-dev.txt`（17 行）、`requirements.lock`
+- **依赖**：`requirements.txt`（55 行）、`requirements-vector.txt`（29 行，向量库客户端按需装）、`requirements-dev.txt`（26 行）、`requirements.lock`
 - **静态面板**：`app/static/index.html` + 图标资源
 
 ### 附录 C：行号会漂移，用脚本校验

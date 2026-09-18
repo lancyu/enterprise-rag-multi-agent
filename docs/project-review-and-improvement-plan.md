@@ -393,7 +393,9 @@ app/tools → db                                                          ← �
 | P0-3 | ✅ 已完成 | 「格式 → 解析器」收敛为**唯一分发表** `_SUFFIX_LOADERS` + 唯一入口 `doc_loader.load_file`（`SUPPORTED_SUFFIX` 改为由它派生）；`knowledge_upload_file` 改走这个入口，不再自己写一份后缀分发。**根因**：上传那条落到最弱一级 `PyPDFLoader`、重建那条走完整三级降级，同一个 PDF 产出两份文本，重建会**静默覆盖**早先上传的内容。顺带把「过滤空白段落」从 `load_all_documents` 下沉到 `load_file`——留在调用方只会让上传链路漏掉它。新增 `tests/test_upload_rebuild_alignment.py`（8 项），**5 条反向验证全部命中**；其中「`SUPPORTED_SUFFIX` 是不是派生的」**只能用 AST 判据**（两边取值相等时 `==` 恒真，退回不会变红，第一版就踩了这个坑） |
 | P0-4 | ⚠️ **已完成，但原判断需订正** | 原写的证据「`trace.jsonl` 会记 query 原文与检索片段」**实测不成立**：本地 1188 条记录里全部 span attr 都是长度 / 计数 / 布尔 / 枚举（`hits`、`degraded`、`scene="policy"`…），没有一条含正文；唯一出现过的个人数据是 2026-09-15 那批记录里的 `employee: "E1001"`（工号，当前代码已不再写该字段）。**结论：这条更该做，理由比原判断更硬** —— `span(name, **attrs)` 与 `span.attrs[k] = v` 都是**开放字段**，任何一处将来写下 `span("retrieve", query=query)` 就会立刻把原文落进磁盘且无任何机制察觉；「现在没人这么写」不是可维护的保证。落地：新增 `app/core/trace_mask.py` 作为**唯一脱敏入口**，在 `end_trace` 里做（不是 `_persist` 里）—— 因为返回值会挂进响应体的 `span_tree`，两处各脱各的必然分叉。判据只有一条**长度**（枚举天生短、正文天生长），凭据与 PII 另走形态规则。新增 `tests/test_trace_mask.py`（17 项），**7 条反向验证全部命中**。过程中测试先变红揪出一处真误报：手机号边界用 `(?<!\d)` 会把 `trace_id`（16 位十六进制）里恰好藏着的一段号码当手机号替换掉，已收紧为字母数字边界 |
 | P1-1 | ⚠️ **方向已订正** | 原写"建 CI"，与本仓库 2026-09-14 的**既定决定**（本仓库不开源，不重建 `.github/`、不建 pre-commit）直接冲突。改为**本地一键门禁**：把行号校验器纳入 pytest（四道 → 三道），单独脚本承载配置分区表那一类 |
-| P1-2 ~ P1-6 | ⏳ 待做 | 第 3 批 |
+| P1-2 | ✅ 已完成 | `[tool.importlinter]` 六层契约 + `tests/test_layering.py`（5 项，含「契约真的会红」的自检）。**豁免 15 条按理由分三类登记，不是待修缺陷清单**；`unmatched_ignore_imports_alerting = error` + 条数棘轮（只减不增）。实测踩到一个坑：`python -m importlinter.cli` **没有 `__main__` 入口**，会静默返回 0 —— 一条永远"通过"的门禁 |
+| P1-6 | ⏳ 待做 | 第 3 批；做完后 `app.utils.embedding -> app.providers.embeddings` 这条 C 类豁免应当消失 |
+| P1-3 ~ P1-5 | ⏳ 待做 | 第 3 批 |
 | P0-5 / P1-7 | ⏳ 待做 | 第 1 批遗留 |
 
 **顺手记下的一个工具缺口**（修 P0-1 时踩到）：`scripts/fix_doc_linenos.py`

@@ -3,15 +3,24 @@
 # 安装：pip install -r requirements.txt -r requirements-dev.txt
 #
 # 用途分工：
-#   pytest   —— 单元测试
-#   ruff     —— 未使用 import / 未使用变量 / 未定义名 / 过期 noqa（死代码规则）
-#   vulture  —— 未使用函数 / 类 / 变量（框架误报靠 pyproject 的 ignore_decorators 收敛）
-#   deptry   —— 未使用 / 缺失 / 传递依赖
+#   pytest        —— 单元测试
+#   ruff          —— 未使用 import / 未使用变量 / 未定义名 / 过期 noqa（死代码规则）
+#   vulture       —— 未使用函数 / 类 / 变量（框架误报靠 pyproject 的 ignore_decorators 收敛）
+#   deptry        —— 未使用 / 缺失 / 传递依赖
+#   import-linter —— 分层依赖契约（下层不得 import 上层，见 pyproject 的 [tool.importlinter]）
 #
-# 这三个静态检查工具由 tests/test_deadcode.py 驱动（本地门禁），
-# 配置见 pyproject.toml 的 [tool.ruff] / [tool.vulture] / [tool.deptry]。
+# 前三个静态检查工具由 tests/test_deadcode.py 驱动，分层契约由 tests/test_layering.py 驱动；
+# 配置见 pyproject.toml 的 [tool.ruff] / [tool.vulture] / [tool.deptry] / [tool.importlinter]。
+#
+# ⚠️ 安装注意（本机实测）：pip 走 https 源会因本机 CA 链不全报
+# `CERTIFICATE_VERIFY_FAILED`，而且 `--trusted-host` 对 https **无效**
+# （报错发生在确认证书阶段之前）。可改用 http 源绕开：
+#   env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+#     pip install --index-url http://pypi.tuna.tsinghua.edu.cn/simple \
+#     --trusted-host pypi.tuna.tsinghua.edu.cn -r requirements-dev.txt
 # ============================================================
 pytest>=8.0,<10.0
 ruff>=0.6,<1.0
 vulture>=2.11,<3.0
 deptry>=0.20,<1.0
+import-linter>=2.0,<3.0

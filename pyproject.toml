@@ -144,3 +144,91 @@ DEP003 = []
 # 把任意一条清空后重跑 deptry，若不再报该项，说明该条是僵尸。
 # 本次就是这么查出 DEP003 的 4 条与 DEP004 的 1 条已失效。
 DEP004 = []
+
+# ------------------------------------------------------------
+# import-linter：把分层写成**可执行的契约**（P1-2）
+#
+# 为什么需要它：`api → core → … → utils` 这条线在文档里写了很久，
+# 但**没有任何机制拦得住**。加一处 `from app.api import x` 到 `app/rag/` 里，
+# 代码照跑、测试照绿，只有下一个读代码的人才会发现分层已经名存实亡。
+#
+# 契约方向：**下层不得 import 上层**（列表自上而下）。同一层内互相 import 允许。
+#
+# 层的划分依据是**运行时职责**，不是目录名：
+#   app.api                          —— HTTP 接口层（FastAPI 路由）
+#   app.graph                        —— 编排层（LangGraph 工作流）
+#   app.core                         —— 服务层（五个 Agent、路由漏斗、启动自检）
+#   app.rag | app.memory | app.tools —— 能力层（检索 / 记忆 / 业务工具）
+#   app.db | app.providers           —— 适配层（向量库与 Redis、LLM 与 Embedding 厂商）
+#   app.utils                        —— 基础层（日志、缓存、文本、文档加载）
+#
+# ⚠️ 关于 ignore_imports 里那 15 条：它们是**已知且接受**的依赖方向，
+# 不是待修的缺陷。分成三类，每条都写明理由 —— 这是 deptry per_rule_ignores
+# 与 tests/deadcode_allowlist.py 的同一套做法：豁免必须是一次有意识的决策。
+#
+# unmatched_ignore_imports_alerting = error：**清单只减不增**。
+# 被豁免的那行 import 一旦被删/挪走，条目立刻变成"僵尸豁免"并把门禁打红 ——
+# 避免这份清单像所有无人维护的豁免清单一样，慢慢变成一串没人敢动的噪音。
+#
+# 新增一条向上依赖时会红。这是**刻意的**：那一刻正是需要有人判断
+# 「是真的需要，还是分层放错了位置」的时候。
+# ------------------------------------------------------------
+[tool.importlinter]
+root_package = "app"
+include_external_packages = false
+
+[[tool.importlinter.contracts]]
+name = "分层：下层不得 import 上层"
+type = "layers"
+layers = [
+    "app.api",
+    "app.graph",
+    "app.core",
+    "app.rag : app.memory : app.tools",
+    "app.db | app.providers",
+    "app.utils",
+]
+ignore_imports = [
+    # ---- A 类（10 条）：能力层使用 app.core 里的**基础设施子模块** ----
+    # app.core 目前同时装着两类东西：编排（router_agent / sub_agents / tool_agent /
+    # routing / self_check）与**基础设施**（prompts / llm_factory / tracing /
+    # errors / request_ctx / observability）。下面这些边指向的**全是后者**，
+    # 方向本身是预期的：能力层当然要用 prompt 模板和模型工厂。
+    # 之所以在契约里仍算"向上"，只是因为它们和编排代码住在同一个包里。
+    # 把这些基础设施拆成独立的 app/infra/ 能消掉这批豁免，但会让 30+ 处 import
+    # 改路径、并对运行时行为零影响 —— 收益是"契约看起来更干净"，
+    # 代价是一次大面积重命名。故显式登记为已知且接受。
+    "app.memory.consolidator -> app.core.prompts",
+    "app.memory.consolidator -> app.core.llm_factory",
+    "app.memory.dream -> app.core.prompts",
+    "app.memory.dream -> app.core.llm_factory",
+    "app.rag.generator -> app.core.prompts",
+    "app.rag.generator -> app.core.llm_factory",
+    "app.rag.retriever -> app.core.prompts",
+    "app.rag.retriever -> app.core.llm_factory",
+    "app.rag.retriever -> app.core.request_ctx",
+    "app.providers.llm -> app.core.observability",
+    # app.rag.evaluator 用 AppError 把内部失败转成可外发的故障类型 ——
+    # 异常基类就该是全局共享的最低层设施，方向没有争议。
+    "app.rag.evaluator -> app.core.errors",
+
+    # ---- B 类（2 条）：启动自检要跑一遍真实的图 ----
+    # self_check 是"启动时把整条链路真的跑一遍"的能力，按职责它属于编排层，
+    # 只是住在 app/core/ 里。它的自检项必须 invoke 真实工作流，否则就退化成
+    # "只检查配置项存在"——那正是它当初要取代的东西。
+    "app.core.self_check -> app.graph.workflow_graph",
+    "app.core.self_check -> app.graph.state",
+
+    # ---- C 类（2 条）：基础层向上依赖，**这两条是真债务，不是接受** ----
+    # ① logger 需要 get_trace_id 才能给每行日志加 [trace=xxx] 前缀。
+    #    更干净的做法是把 trace_id 的存放处下沉到 utils（或独立的
+    #    app/runtime_flags 式零依赖模块），logger 只读那个 —— 与 P1-6
+    #    解 config 反向依赖是同一件事的另一半。
+    "app.utils.logger -> app.core.tracing",
+    # ② embedding 需要读 providers.embeddings 判断当前是"真实神经向量"还是
+    #    "本地哈希"，而 config 又要读 embedding → 形成
+    #    config → utils.embedding → providers.embeddings → config 的环。
+    #    这一条由 P1-6 处理（把"当前 embedding 模式"变成启动时注入的普通值）。
+    "app.utils.embedding -> app.providers.embeddings",
+]
+unmatched_ignore_imports_alerting = "error"
