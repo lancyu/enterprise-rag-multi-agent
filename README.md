@@ -10,21 +10,21 @@
   <tr>
     <td width="50%">
       <b>智能对话</b><br/>
-      <img src="docs/images/panel-answer.png" alt="智能对话：流式输出 + 引用溯源 + 场景徽章" />
+      <img src="docs/images/panel-answer.png" alt="智能对话：流式输出 + 引用溯源 + 场景徽章" width="100%" />
     </td>
     <td width="50%">
       <b>执行耗时瀑布图</b><br/>
-      <img src="docs/images/panel-trace.png" alt="嵌套 span 树：一次请求各阶段耗时" />
+      <img src="docs/images/panel-trace.png" alt="嵌套 span 树：一次请求各阶段耗时" width="100%" />
     </td>
   </tr>
   <tr>
     <td width="50%">
       <b>工作流引擎</b><br/>
-      <img src="docs/images/panel-workflow.png" alt="LangGraph 拓扑：9 节点 / 3 条件边" />
+      <img src="docs/images/panel-workflow.png" alt="LangGraph 拓扑：9 节点 / 3 条件边" width="100%" />
     </td>
     <td width="50%">
       <b>知识库管理</b><br/>
-      <img src="docs/images/panel-knowledge.png" alt="知识库管理：文档与片段" />
+      <img src="docs/images/panel-knowledge.png" alt="知识库管理：文档与片段" width="100%" />
     </td>
   </tr>
 </table>
