@@ -5,7 +5,7 @@
 >
 > | 文档 | 侧重 |
 > |---|---|
-> | `README.md`（497 行） | 怎么装、怎么跑、有哪些接口 |
+> | `README.md`（663 行） | 怎么装、怎么跑、有哪些接口 |
 > | `项目学习指南.md`（965 行） | 面试问答、话术素材、必背数字 |
 > | **本文**（`docs/project-introduction.md`） | **每个模块干什么、代码在哪几行、底层用了什么知识** |
 >
@@ -2105,8 +2105,10 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **568 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **610 passed** |
 | └ 分层依赖契约（P1-2） | `pytest tests/test_layering.py -q` | 通过（下层不得 import 上层）；契约定义在 `pyproject.toml` 的 `[tool.importlinter]` |
+| └ 零依赖标志位（P1-6） | 同上（第二条 forbidden 契约） | 通过（`app/runtime_flags.py` 不许 import 任何 `app.*`） |
+| └ 增量索引对账（P1-5） | `pytest tests/test_incremental_index.py -q` | 通过（连跑两次条数不变 / 删源后片段全消失） |
 | └ 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（6 项发现 = 豁免清单 6 项） |
 | └ **文档行号校验** | `pytest tests/test_doc_linenos.py -q` | 通过（**654 条声明全一致** + 校验器自身 **24 项**回归） |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
@@ -2256,7 +2258,7 @@ python scripts/verify_doc_linenos.py
 | 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-744）` |
 | 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 231-240 |
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:131-150` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（497 行）、`app/config.py`（828 行） |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（663 行）、`app/config.py`（828 行） |
 | 9 | 区域行号表（裸区间） | `287-342` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:244-319` |
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |

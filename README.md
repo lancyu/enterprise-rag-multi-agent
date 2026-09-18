@@ -6,6 +6,15 @@
 
 > 参考设计：[基于 LangGraph + FastAPI + 大模型的企业智能助手 RAG 知识引擎系统设计与实践](https://bbs.huaweicloud.com/blogs/482867)
 
+**目录**：[一、核心能力](#一核心能力) · [二、部署与启动](#二部署与启动) · [三、目录结构](#三目录结构) ·
+[四、LangGraph 工作流](#四langgraph-工作流五-agent-协作) · [五、API 接口清单](#五api-接口清单) ·
+[六、关键设计说明](#六关键设计说明) · [七、配置参考](#七配置参考) · [八、实测结果](#八实测结果) ·
+[九、二次开发指引](#九二次开发指引)
+
+> 更细的代码地图见 [`docs/project-introduction.md`](docs/project-introduction.md)
+> （带精确行号，由 pytest 里的校验器守着）；当前架构的权威描述见
+> [`docs/multi-agent-architecture.md`](docs/multi-agent-architecture.md)。
+
 ---
 
 ## 一、核心能力
@@ -17,7 +26,7 @@
 | 闲聊零成本直出 | 寒暄**不调模型、不检索、不调工具**（`app/core/sub_agents.py` 模板直出），因此闲聊不可能误触发 RAG 或 function calling 而浪费 token；离线 Mock 模型下行为也完全一致 |
 | RAG 五层架构 | 数据准备 → 索引构建 → 检索优化 → 生成控制 → 评估迭代（`app/rag/`），多路召回 + RRF 融合 + 引用溯源 + 置信度拒答 |
 | 混合检索增强 | 向量 + 词面**独立**倒排索引（BM25）并发召回；lost-in-the-middle 片段重排；Embedding 缓存（查询 LRU+TTL、文档内容哈希持久化） |
-| Rerank 精排（可选） | cross-encoder 二次评分重排，真正提升「该进 Top-K 却排后」的片段，与 reorder 正交；默认关闭，未装 `sentence-transformers` 时自动降级为不精排 |
+| Rerank 精排（可选） | cross-encoder 二次评分重排，与 reorder 正交。两种后端按配置自动选：配了 `RERANK_BASE_URL` + Key 走 `/rerank` 接口，否则回退本地 `sentence-transformers`。**默认关闭** —— 2026-09-18 实测在本项目用例集上三项指标全部下降（见 §八），开启前建议先跑 `scripts/eval_retrieval.py` 自己验一次 |
 | 请求级上下文 | 同请求内共享中间结果，避免重复计算与参数穿透（`app/core/request_ctx.py`）：query 向量复用、来源白名单、本轮证据。**授权事实与证据不由模型回传**——否则等于把"我能查谁的资料"交给模型决定 |
 | 可观测性 | 嵌套 span 树（对齐 OpenTelemetry 的 trace=span 树）+ 前端瀑布图 + `logs/trace.jsonl` 持久化（**落盘前统一过一层脱敏**，见 `TRACE_MASK_*`）；可选接入 LangSmith（`LANGSMITH_*` 环境变量，LangChain 自动 trace） |
 | 工程化横切 | 统一异常基类、Prompt 注册表、trace_id 贯穿日志、入站限流（滑动窗口，默认 20 次/分/IP） |
@@ -27,30 +36,66 @@
 | 无登录态设计 | 服务端**没有登录态**：`user_id` 只用于隔离长期记忆，不参与任何鉴权，也没有工具会读它。工号只能来自用户原话或工具返回值——正常路径下由 `find_employee_by_name` 换取，模型不得编造。遇到「**我的**年假还剩几天」这类问法，正确行为是向用户索要姓名或工号 |
 | 多轮对话记忆 | 会话级上下文，自动裁剪最近 10 轮，24 小时自动过期 |
 | 可视化面板 | 全新设计系统（靛紫品牌色 / 侧边栏布局 / 移动端响应式）：智能对话（流式输出/引用溯源/场景徽章/反馈）/ 知识库管理 / 工作流引擎 / 记忆系统 / 评估迭代 / 服务自测六大模块 |
-| 全链路自测 | 启动执行本地轻量自检（9 项，不真实调用模型），深度检查（真实调用 LLM/Embedding）经 `/test/all` 手动触发；另提供 568 项 pytest 回归（含 80 项多 Agent 架构级用例） |
+| 全链路自测 | 启动执行本地轻量自检（9 项，不真实调用模型），深度检查（真实调用 LLM/Embedding）经 `/test/all` 手动触发；另提供 610 项 pytest 回归（含 80 项多 Agent 架构级用例） |
 
 ---
 
-## 二、快速开始
+## 二、部署与启动
 
-### 方式一：本地启动（推荐先跑这个）
+### 环境要求
+
+| 依赖 | 版本 | 是否必需 | 说明 |
+|---|---|---|---|
+| Python | 3.13（推荐）/ 3.10+ | ✅ | 依赖 `requirements.txt` |
+| Redis | 7.x | ❌ | 会话历史持久化；不可用时自动降级为进程内字典 |
+| 向量库 | chroma / milvus | ❌ | 默认 `memory`（零依赖，数据落 `vector_store/`），单实例够用 |
+| 大模型 API | 任意 OpenAI 兼容服务 | ❌ | 留空则启用本地 Mock 模型，**全链路照样跑得通** |
+| Embedding API | OpenAI 兼容 `/embeddings` | ❌ | 留空则降级为本地哈希向量 |
+
+> **零配置可用性是这个项目的硬要求**：没有 Key、没有 Redis、没有向量库时，
+> 服务仍应完整启动并返回合理答案（Mock 模型 + 本地哈希向量）。
+> 因此"先把环境跑起来"和"接真实模型"是两件可以分开做的事。
+
+### 方式一：本地部署（推荐先跑这个）
 
 ```bash
-# 1. 安装依赖
+# 1) 进入项目目录并建虚拟环境
+cd langgraph-enterprise-bot
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# 2) 安装依赖
 pip install -r requirements.txt
 
-# 2.（可选）配置大模型，未配置则自动使用本地 Mock 模型
+# 3) 准备配置（可选：不配也能跑，会走 Mock 降级）
 cp .env.example .env
-#    编辑 .env 填入 LLM_API_KEY 与 LLM_BASE_URL
+#    编辑 .env，至少填 LLM_API_KEY / LLM_BASE_URL / LLM_MODEL_NAME
+#    Embedding 默认复用 LLM 的 Key 与地址，也可单独指定 EMBEDDING_*
 
-# 3. 启动服务
+# 4) 启动服务
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8001
 
-# 4. 打开面板
-open http://localhost:8001
+# 5) 打开可视化面板
+open http://localhost:8001         # 或浏览器访问 http://localhost:8001
 ```
 
-服务启动时会自动执行本地轻量自检（探活基础设施，**不真实调用 LLM**，避免启动被上游网络拖住），并在知识库为空时**自动完成首次建索引**，开箱即用。深度自检（含真实模型问答）请访问 `/test/all`。
+**验证部署是否成功**：
+
+```bash
+curl -s http://localhost:8001/health                 # 健康检查（Docker 健康检查也是打这个）
+curl -s http://localhost:8001/test/self-check        # 启动自检 9 项的详情
+curl -s http://localhost:8001/knowledge/stats        # 知识库片段数（首次启动会自动建索引）
+```
+
+首次启动会自动完成两件事：**本地轻量自检**（探活基础设施，不真实调用 LLM，
+避免启动被上游网络拖住）、**知识库为空时自动建索引**。所以放进 `data/` 的文档
+无需手工触发重建；改了文档再调 `POST /knowledge/rebuild`。
+
+业务数据库（SQLite，供 3 个只读工具查询）首次部署需播种一次：
+
+```bash
+python scripts/seed_enterprise_db.py
+```
 
 ### 方式二：Docker Compose 一键部署
 
@@ -81,6 +126,40 @@ docker compose exec app python scripts/check_vector_db.py
 > 服务会照常启动但把数据写进容器内的内存库——看起来一切正常，实际检索的是空索引。
 > 打开严格模式后这类问题会直接拒绝启动，并在日志里说明原因。
 
+### 生产部署清单
+
+从"能跑"到"能上线"，下面几项需要显式确认（默认配置是为了**本地零依赖可跑**，
+不是为生产准备的）：
+
+| 项 | 默认 | 生产建议 | 不做会怎样 |
+|---|---|---|---|
+| `VECTOR_DB_TYPE` | `memory` | `chroma`（单机）或 `milvus`（分布式） | 进程重启即丢索引，且无法多实例共享 |
+| `VECTOR_DB_STRICT` | `false` | `true` | 配了生产后端却连不上时**静默**退回内存库：服务照常 200，实际检索的是空索引 |
+| `LLM_API_KEY` | 空 | 必填 | 走 Mock 规则模型，回答质量不可用于生产 |
+| `WITH_VECTOR_CLIENTS` | `0` | 用 chroma/milvus 时设为 `1` | 容器内缺 `chromadb` / `pymilvus`，同样静默退回内存库 |
+| `REDIS_HOST` | 空 | 指向 Redis | 会话历史降级为进程内字典，重启即丢、多实例间不共享 |
+| `TRACE_MASK_ENABLED` | `true` | 保持 `true` | trace 原文（可能含提问正文）落盘 |
+| `RATE_LIMIT_PER_MINUTE` | 20 | 按业务调整 | 单 IP 限流，多副本时会被放大 N 倍（见下节） |
+| 反向代理 | 无 | Nginx / Caddy 反代 8001 | SSE 流式响应须关掉代理缓冲，否则前端拿不到逐字输出 |
+
+Nginx 反代 SSE 的关键两行（缺一就变成"等全部生成完才一次性返回"）：
+
+```nginx
+proxy_buffering off;          # 不缓冲，否则流式被攒成一次性响应
+proxy_read_timeout 300s;      # 长连接别被默认 60s 掐断
+```
+
+### 常见排障
+
+| 现象 | 优先查 |
+|---|---|
+| 服务起来了但检索全是空 | `VECTOR_DB_TYPE` 实际生效的是哪个：`docker compose exec app python scripts/check_vector_db.py` |
+| 面板显示 `Mock 模型` | `.env` 里 `LLM_API_KEY` 是否为空；容器内是否真的注入了环境变量 |
+| 流式输出不逐字、一次性返回 | 反向代理的 `proxy_buffering`（见上） |
+| 启动卡住、端口迟迟不 LISTEN | `LLM_HEALTH_CHECK=true` 会在启动时真实 ping 模型，上游不通/限流会拖住启动 |
+| 检索质量突然变差 | 先跑 `python scripts/eval_retrieval.py` 对比基线，再怀疑代码 |
+| 「某条知识怎么问都检索不到」 | 先跑一次索引对账（向量库与词面索引的来源集合是否一致）：`python -c "from app.rag.indexer import reconcile; print(reconcile())"` |
+
 ### ⚠️ 部署形态：默认单实例
 
 **本服务不是无状态服务。** 有五处状态是模块级单例或进程内字典：
@@ -108,7 +187,7 @@ docker compose exec app python scripts/check_vector_db.py
 ### 运行测试
 
 ```bash
-# 主回归套件（568 项，纯 pytest，不需要起服务）
+# 主回归套件（610 项，纯 pytest，不需要起服务）
 pytest                                   # 全量
 pytest tests/test_multi_agent.py -q      # 只跑多 Agent 架构级用例（80 项）
 pytest -k tool_agent                     # 按名字筛选
@@ -119,6 +198,34 @@ python tests/test_service.py --url http://host:8001 # 指定服务地址
 python tests/test_service.py --skip-heavy           # 跳过耗时项
 python tests/test_service.py -v                     # 详细日志
 ```
+
+### 本地门禁（改完代码必跑两条）
+
+```bash
+pytest                                                             # 含文档行号校验、分层契约、死代码扫描
+ruff check app scripts tests --no-cache --output-format concise    # 静态检查
+```
+
+文档行号漂移时，回填脚本会自动改写 `docs/project-introduction.md`：
+
+```bash
+python scripts/fix_doc_linenos.py            # dry-run，只看会改什么
+python scripts/fix_doc_linenos.py --write    # 落盘（自动备份到 artifacts/backup/）
+```
+
+### 检索质量评测（改动检索链路前后各跑一次）
+
+```bash
+python scripts/eval_retrieval.py             # 输出四项指标 + 最差 N 条，并与基线 diff
+python scripts/eval_retrieval.py --worst 10  # 多看几条最差样本
+python scripts/eval_retrieval.py --update    # 确认后刷新基线（默认拒绝覆盖）
+```
+
+输出 `hit_rate / MRR / Recall@K / NDCG@K` 与**按 NDCG 升序的最差样本**——
+看一个平均分远不如看最差的几条。⚠️ 会真实调用 embedding 接口（每条用例一次）。
+
+同目录还有 `scripts/eval_generation.py`（生成侧：拒答率 / 截断率 / 忠实度），
+以及 `scripts/baseline_snapshot.py`（切分基线快照，被回归测试读取）。
 
 > ⚠️ **不要把 `pytest` 放到后台任务里跑。** 沙箱会拦截 `tmp_path` 的目录创建
 > （报 `PermissionError` 而非 `FileExistsError`，绕过 pytest 自身的容错），
@@ -134,7 +241,8 @@ python tests/test_service.py -v                     # 详细日志
 langgraph-enterprise-bot/
 ├── app/
 │   ├── main.py                 # FastAPI 入口：生命周期、路由注册、启动自检
-│   ├── config.py               # 全局配置中心（全部支持环境变量覆盖）
+│   ├── config.py               # 全局配置中心（全部支持环境变量覆盖，**不依赖任何业务层**）
+│   ├── runtime_flags.py        # 零依赖运行时标志位：provider → config 的单向事实通道（解环用）
 │   ├── api/                    # 接口路由层
 │   │   ├── chat.py             #   智能对话接口（含反馈上报）
 │   │   ├── knowledge.py        #   知识库管理接口
@@ -178,28 +286,35 @@ langgraph-enterprise-bot/
 │   ├── graph/                  # LangGraph 工作流
 │   │   ├── state.py            #   全局状态定义（scene 与 intent_type 的分工见模块 docstring）
 │   │   ├── nodes.py            #   9 个节点（含五个 Agent）
-│   │   ├── edges.py            #   条件分支路由（场景分发 + 工具改道 + 生成出口）
+│   │   ├── edges.py            #   3 条条件边（场景分发 + 工具改道 + 生成出口）
 │   │   └── workflow_graph.py   #   图组装编译（完整图 + 流式前置图共用一套装配函数）
 │   ├── tools/                  # 业务工具（全部只读）
 │   │   └── sqlite_tools.py     #   4 个 Function Calling 工具（含 JSON Schema 定义）
-│   ├── utils/                  # 通用工具
+│   ├── utils/                  # 通用工具（依赖树的**最底层**，不得反向依赖上层）
 │   │   ├── logger.py           #   全链路日志（含 trace_id 注入）
-│   │   ├── doc_loader.py       #   多格式文档解析
-│   │   ├── embedding.py        #   Embedding 双模式客户端（API 模式带缓存）
+│   │   ├── doc_loader.py       #   多格式文档解析（PDF 三级降级）
 │   │   ├── cache.py            #   Embedding 缓存（查询 LRU+TTL、文档哈希持久化）
 │   │   └── validator.py        #   安全参数校验
-│   ├── providers/              # 外部能力适配层（统一降级入口）
+│   ├── providers/              # 外部能力适配层（统一降级入口，换模型只改配置）
 │   │   ├── llm.py              #   LLM：OpenAI 兼容 API / MockChatModel
-│   │   ├── embeddings.py       #   Embedding：API / 本地哈希向量
-│   │   └── rerank.py           #   可选 cross-encoder 精排
+│   │   ├── embeddings.py       #   Embedding：API / 本地哈希向量（双模式降级）
+│   │   └── rerank.py           #   精排：APIReranker（/rerank 接口）/ 本地 cross-encoder
 │   └── static/index.html       # 前端 SPA 可视化面板
 ├── data/                       # 企业知识库原始文档 + enterprise.db（SQLite 业务数据）
-├── tests/                      # pytest 回归套件（568 项）
+├── tests/                      # pytest 回归套件（610 项）
 │   ├── test_multi_agent.py     #   多 Agent 架构级用例（80 项，守"谁来做决定"）
 │   ├── test_sqlite_tools.py    #   3 个只读工具 + 只读强制 + 边界情形
+│   ├── test_layering.py        #   分层契约（import-linter，含"契约真的会红"自检）
+│   ├── test_doc_linenos.py     #   文档行号校验器自身的回归（十四类逐类反向验证）
 │   └── test_service.py         #   端到端脚本（4 阶段 9 项，需起服务）
 ├── docs/                       # 设计文档与事故复盘（multi-agent-architecture.md 为当前架构权威）
-├── scripts/                    # 运维脚本（建表播种 / 死代码扫描 / 切分基线）
+├── scripts/                    # 运维与门禁脚本
+│   ├── eval_retrieval.py       #   检索评测：hit_rate / MRR / Recall / NDCG + 最差 N 条
+│   ├── eval_generation.py      #   生成评测：拒答率 / 截断率 / 忠实度
+│   ├── verify_doc_linenos.py   #   文档行号门禁（已纳入 pytest）
+│   ├── fix_doc_linenos.py      #   行号自动回填（--write 生效，自动备份）
+│   ├── deadcode_scan.py        #   死代码扫描（由 tests/test_deadcode.py 驱动）
+│   └── seed_enterprise_db.py   #   业务库播种
 ├── _archive/                   # 已删除实现的历史存档（含 README 说明删除理由）
 ├── vector_store/               # 向量索引持久化目录
 ├── logs/                       # 运行日志（含 trace.jsonl）
@@ -393,6 +508,9 @@ langgraph-enterprise-bot/
 | `LLM_TEMPERATURE` | 0.1 | 低温度约束，保证回答严谨。**必须与 `LLM_DISABLE_THINKING` 配套**：部分模型关思考后只接受特定温度，配错会被接口以 400 明确拒绝（见 `app/config.py` 对应注释） |
 | `LLM_TIMEOUT` | 60 | 单次 LLM 请求超时（秒），过长会让慢请求迟迟不失败 |
 | `LLM_HEALTH_CHECK` | false | 启动时是否对真实模型做 ping 校验。默认关是**可用性优先**——启动时上游不通不该让服务起不来；打开则能提前发现 Key / 模型名错误 |
+| `EMBEDDING_API_KEY` / `EMBEDDING_BASE_URL` | 复用 `LLM_*` | Embedding 服务（OpenAI 兼容 `/embeddings`）；留空则降级为本地哈希向量 |
+| `EMBEDDING_MODEL_NAME` | text-embedding-3-small | Embedding 模型名 |
+| `EMBEDDING_QUERY_PREFIX` | 空 | 查询侧指令前缀（bge 系列需要；换非 bge 模型清空即可，代码不识别模型名） |
 | `VECTOR_DB_TYPE` | memory | `memory` 零依赖 / `chroma` 单机嵌入式 / `milvus` 分布式；**写错直接报错**，不会静默退回内存库 |
 | `VECTOR_DB_STRICT` | false | 配了 chroma/milvus 却连不上时，`false` 降级为内存库并告警，`true` 拒绝启动 |
 | `MILVUS_URI` | http://localhost:19530 | Milvus 连接地址（`VECTOR_DB_TYPE=milvus` 时生效） |
@@ -407,9 +525,11 @@ langgraph-enterprise-bot/
 | `EMBEDDING_CACHE_QUERY_TTL` | 600 | 查询向量缓存 TTL（秒） |
 | `EMBEDDING_CACHE_QUERY_MAX_SIZE` | 1000 | 查询向量缓存容量 |
 | `RATE_LIMIT_PER_MINUTE` | 20 | 单 IP 每分钟入站请求上限 |
-| `RERANK_ENABLED` | false | 是否启用 cross-encoder 精排（需 `sentence-transformers`） |
-| `RERANK_MODEL` | BAAI/bge-reranker-v2-m3 | 重排模型名 |
-| `RERANK_TOP_N` | 10 | 参与精排的候选条数 |
+| `RERANK_ENABLED` | false | 是否启用精排。**默认关闭且有实测依据**：2026-09-18 在本项目用例集上三项指标全部下降（见 §八） |
+| `RERANK_MODEL` | BAAI/bge-reranker-v2-m3 | 重排模型名（不识别具体模型，换模型改这里即可） |
+| `RERANK_BASE_URL` / `RERANK_API_KEY` | 复用 `EMBEDDING_*` | 精排服务地址与密钥；**两者都有值**才走 `/rerank` 接口，否则回退本地 `sentence-transformers` |
+| `RERANK_CANDIDATES` | 64 | 参与精排的候选条数。实际值会**抬升到不小于 `SIMILARITY_TOP_K`**——窗口小于返回条数时，未精排的片段会混进结果 |
+| `DOCSTORE_STRATEGY` | upserts_and_delete | 重建索引的对账策略：`upserts` / `duplicates_only` / `upserts_and_delete`。只有最后一种会删除语料里已消失的来源；写错会降级为默认**并告警** |
 | `LANGSMITH_ENABLED` | false | 是否启用 LangSmith 可观测（需 `langsmith`） |
 | `LANGSMITH_API_KEY` | 空 | LangSmith 平台密钥 |
 | `LANGSMITH_PROJECT` | langgraph-enterprise-bot | LangSmith 项目名 |
@@ -421,7 +541,7 @@ langgraph-enterprise-bot/
 
 ## 八、实测结果
 
-环境：Python 3.13.12 / macOS，无 API Key（Mock 降级模式）
+环境：Python 3.13.12 / macOS，API 模式（真实 Embedding + 真实大模型）
 
 ```
 启动自检：9/9 通过
@@ -433,12 +553,58 @@ langgraph-enterprise-bot/
   阶段 3 工作流 2/2 · 阶段 4 对话链路 5/5
 
 检索质量：8/8 Top1 命中预期主题
-知识库：12 篇文档 → 176 条向量片段（词面倒排索引 176 个键）
+知识库：12 篇文档 → 176 条向量片段（词面倒排索引 176 个键，两处来源集合一致）
+
+回归套件：610 passed
 ```
+
+### 检索基线（`scripts/eval_retrieval.py`，27 条用例 / Top-K=5）
+
+| 指标 | 基线 | 开 Rerank 后 | 变化 |
+|---|---|---|---|
+| hit_rate | 1.000 | 1.000 | ＝ |
+| MRR | 0.944 | 0.926 | ↓ -0.018 |
+| Recall@K | 0.715 | 0.687 | ↓ -0.028 |
+| NDCG@K | 0.778 | 0.741 | ↓ -0.037 |
+
+两个值得记住的结论：
+
+1. **命中率在这个用例集上是天花板**（恒为 1.000）——它回答不了"排序变好了没有"。
+   做检索侧 A/B 必须看 Recall / NDCG。
+2. **Rerank 在本项目目前是负收益，所以默认关闭**。原因是现行相关性判据是关键词命中，
+   而词面路（BM25）已经在优化这个目标；cross-encoder 优化的是语义相关，
+   会把"含关键词但语义次要"的片段往下压。
+   这不是"rerank 没用"，而是**当前判据测不出它的用处** —— 换判据前不要据此否定它。
 
 ---
 
 ## 九、二次开发指引
+
+### 代码从哪读起
+
+按"一次提问走过的路径"读，比按目录字母序读快得多：
+
+| 顺序 | 文件 | 看什么 |
+|---|---|---|
+| 1 | `app/main.py` | 服务是怎么装配起来的（lifespan、中间件、路由注册、启动自检） |
+| 2 | `app/core/router_agent.py` | **唯一入口**：请求先过这里决定走哪条路（本地意图漏斗优先，判不了才调模型） |
+| 3 | `app/graph/nodes.py` + `edges.py` | 9 个节点 + 3 条条件边，五 Agent 协作的骨架 |
+| 4 | `app/rag/retriever.py` | 检索主链路：向量 + 词面双路召回 → RRF 融合 → 阈值 → 去重 |
+| 5 | `app/rag/generator.py` | 生成控制：引用溯源、置信度拒答 |
+| 6 | `app/config.py` | 所有可调参数的唯一定义处（每个分区都有中文注释说明为什么这么定） |
+
+改代码时**有三条被机制守住的规则**，违反会在 `pytest` 里直接红：
+
+1. **分层方向**：`api → graph → core → {rag, memory, tools} → {db, providers} → utils`。
+   下层不得 import 上层（契约在 `pyproject.toml` 的 `[tool.importlinter]`，
+   豁免清单**只减不增**）。例外：允许能力层用 `app/core/` 里的**基础设施**
+   子模块（prompts / llm_factory / tracing …）。
+2. **`app/config.py` 不许依赖业务层**：它必须是依赖树的叶子。需要"运行时才知道的值"
+   （如实际生效的 embedding 模式）时，由 provider 写进 `app/runtime_flags.py`，
+   config 只读它——`app/runtime_flags.py` 本身**零依赖**（有契约守着）。
+3. **文档里的行号必须与代码一致**：`docs/project-introduction.md` 是一份带精确行号的
+   代码地图，校验器已纳入 pytest（十四类声明，逐类有反向验证）。改完 `app/` 下任何文件
+   的行数都要跑 `python scripts/fix_doc_linenos.py --write`。
 
 **替换真实大模型**：在 `.env` 填入 `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL_NAME` 后重启，
 前端徽章会从 `Mock 模型` 变为 `大模型`，业务代码无需任何改动。

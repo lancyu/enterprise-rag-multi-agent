@@ -395,14 +395,24 @@ app/tools → db                                                          ← �
 | P1-1 | ✅ 已完成 | 原写"建 CI"，与本仓库 2026-09-14 的**既定决定**（本仓库不开源，不重建 `.github/`、不建 pre-commit）直接冲突。改为**本地门禁收敛**：行号校验器纳入 pytest 后，门禁从四条命令变成**两条**（`pytest` + `ruff`），命令行入口保留 |
 | P1-7 | ✅ 已完成 | 新增 `tests/test_doc_linenos.py`（**21 项**）：真文档全绿 + 命令行退出码双向 + **十三类逐类变异反向验证** + 该绿的要绿（中文量词后面那个数字是计数不是行号）。两个设计要点已落地：变异施加在**文档副本**上；锚点找不到时 **fail 不 skip**。**顺带查出一处真缺陷**：第 6 类的「被包含」判据放过了 `PROMPTS` 24-186（真实跨度 24-221，**少写 35 行**）—— 已把区间收紧为精确比对（单数字仍宽松，因为它声明的是起点），收紧后全文档**只多报这一处、零误报** |
 | P1-2 | ✅ 已完成 | `[tool.importlinter]` 六层契约 + `tests/test_layering.py`（5 项，含「契约真的会红」的自检）。**豁免 15 条按理由分三类登记，不是待修缺陷清单**；`unmatched_ignore_imports_alerting = error` + 条数棘轮（只减不增）。实测踩到一个坑：`python -m importlinter.cli` **没有 `__main__` 入口**，会静默返回 0 —— 一条永远"通过"的门禁 |
-| P1-6 | ⏳ 待做 | 第 3 批；做完后 `app.utils.embedding -> app.providers.embeddings` 这条 C 类豁免应当消失 |
-| P1-3 ~ P1-5 | ⏳ 待做 | 第 3 批 |
+| P1-4 | ✅ 已完成 | 新增 `scripts/eval_retrieval.py`：hit_rate / MRR / **Recall@K** / **NDCG@K** + 最差 N 条。为什么要补后两个：命中率在 27 条用例上**恒为 1.000**（天花板），A/B 完全看不出差别 —— 只有排序敏感的指标能看出 rerank 的收益。Recall 的分母 = 用**同一个** `is_relevant` 扫全量语料得到的 gold 集；分子分母共用判据这件事用**源码级用例**钉住（两处各写一遍时数值测试抓不到，因为两处各自都自洽）。`n_gold==0` 判为**用例缺陷**并排除出均值（不静默变 recall=0）；召回多于 gold 时 NDCG 会 >1，已封顶并把不一致显式报出来。基线（27 条）：hit_rate 1.000 / MRR 0.944 / Recall 0.715 / NDCG 0.778 |
+| P1-3 | ⚠️ **已完成，但 A/B 结论是负的** | 新增 `APIReranker`（OpenAI 兼容 `/rerank`）：此前只支持 sentence-transformers，而本机**没装**那个依赖 —— 「支持精排」在本机一直是空壳。三条约束都落地并有用例：① 喂**原始 chunk 文本**；② 只改顺序、**不改 fused**（阈值与置信度只认融合分）；③ `RERANK_CANDIDATES` 默认 64，且实际值**抬升到不小于 Top-K**（窗口小于返回条数会让未精排片段混进结果，指标却把噪声算在精排头上）。**A/B 实测（27 条）：NDCG 0.778 → 0.741、MRR 0.944 → 0.926、Recall 0.715 → 0.687，三项全部下降**，故默认仍关闭并写进 `.env` / `.env.example`。原因：现行判据是**关键词命中**，词面路（BM25）已经在优化这个目标；cross-encoder 优化的是语义相关，会把「含关键词但语义次要」的片段往下压。**这正是"指标必须先于 rerank 落地"的实证** —— 没有 P1-4，这次改动会被当成一次无害的增强合进去 |
+| P1-5 | ✅ 已完成 | 三态 `DOCSTORE_STRATEGY`（upserts / duplicates_only / upserts_and_delete，与 LlamaIndex 的 DocstoreStrategy 同名同义）+ `indexer.reconcile()`：**只读**比对向量库与词面索引的**来源集合**（只比条数会漏判「两处同时多一份」）。**订正原判断**：验收的两条（连跑两次条数不变、删源后片段全消失）其实**早已成立** —— `build_index` 是 clear + 重建，结构上不可能残留。真正缺的不是修复，是**没有任何机制会去回答这两个问题**：下次有人把 clear 换成增量 upsert，重复与残留会立刻回来而无人察觉。故本条落的是验证机制（`tests/test_incremental_index.py` 9 项，全在临时目录的内存存储上跑，不碰活体索引）。策略名写错时降级**并告警**（告警在 indexer 里发：config 刻意不 import logger，否则会重新成环）。活体索引实测 176/176 条、12/12 来源，一致 |
+| P1-6 | ✅ 已完成 | 新增 `app/runtime_flags.py`（零依赖标志位）：provider 建好 embedder 后**单向**发布「实际生效的 embedding 模式」，config 只读它。此前 `config → utils.embedding → providers.embeddings → config` 成环，代价是任何想单独 import config 的地方都会被拖进整条 provider 初始化链（含一次真实健康检查请求）；实测现在 `import app.config` 后 `app.providers.*` **一个都不加载**。阈值自适应语义逐字不变（api → None、local-hash → 0.08）。顺带删掉兼容壳 `app/utils/embedding.py`（纯 re-export，2 个调用方改指 `app.providers`），C 类豁免 **15 → 14 条**。新增 forbidden 契约「runtime_flags 必须零依赖」并反向验证过。⚠️ 原验收写的「config.py 里不再出现任何 `app.` 内部 import」**过严**：零依赖的 flags 模块也是 `app.` 内部 —— 真正的判据是**环消失** |
+| P1-2 | ✅ 已完成 | `[tool.importlinter]` 六层契约 + `tests/test_layering.py`（5 项，含「契约真的会红」的自检）。**豁免 15 条按理由分三类登记，不是待修缺陷清单**；`unmatched_ignore_imports_alerting = error` + 条数棘轮（只减不增）。实测踩到一个坑：`python -m importlinter.cli` **没有 `__main__` 入口**，会静默返回 0 —— 一条永远"通过"的门禁。（P1-6 后豁免降为 14 条，棘轮同步下调） |
 | P0-5 | ✅ 已完成 | ① 口径统一为 **9 节点 / 3 条件边**（`project-introduction` §1.4 + 架构图 + §5.x、`README`、`multi-agent-architecture`），并写明「直答出口走**普通边**，把它算进条件边是这五个说法对不上的根源」；`docs/README.md` 加「把当时的图拓扑当成现状」一节，`history/` 原文不动。② 新增**第 14 类语义守卫**：文档里以 `_edge` / `_node` 结尾的符号名必须真实存在（**唯一不看数字的一类**）。覆盖面 629 → **654** 条声明，并立刻抓出**一个已删除的旧节点名**仍被当成现状使用（`project-introduction` 里「｀agent_node｀ 里 `get_retrieved_docs()` 却是空的」那段；本行把它写成全角引号是**故意的** —— 写成反引号就会被本类当成一次真实点名）。③ 判据修了两次：首字符必须是**字母**（`_route_edge` 是在说「以什么结尾」，不是点名符号 —— 这是上线时就踩到的误报）。反向验证见 `tests/test_doc_linenos.py` 的 3 条 14 类用例（1 红 2 绿） |
 
-**顺手记下的一个工具缺口**（修 P0-1 时踩到）：`scripts/fix_doc_linenos.py`
-**处理不了 config 分区表**（校验器第 13 类）。那张表 25 行会随 `app/config.py` 的
-任何增删整体错位，而回填脚本对它零覆盖 —— 每次只能按校验器的报错**手工整表重写**。
-这是"校验器能查、修不了"的孤例，值得给它补一段回填逻辑。
+**一个已补上的工具缺口**（原记于修 P0-1 时，2026-09-18 已解决）：`scripts/fix_doc_linenos.py`
+原先**处理不了 config 分区表**（校验器第 13 类）。那张表会随 `app/config.py` 的任何增删
+整体错位，而回填脚本对它零覆盖 —— 每次只能按报错**手工整表重写**（本轮就重写了两次）。
+现已补上两类回填：分区表的区间行、以及表里夹带的**单项**符号行号
+（`文档写第 141 行` 这种，原先只认区间写法）。
+
+⚠️ **但补完仍有一个洞**：分区**数量**变化时（新增一个 `# ====` 横幅），回填脚本
+不会替你写那一行新记录 —— 它只改已存在行的数字，不发明新行。本轮新增
+`DOCSTORE_STRATEGY` 分区时就是这样，仍需手工插入一行（可用
+`verify_doc_linenos.config_partition_spans()` 算出跨度）。
+"能改数字、不能生行"是有意留的边界：发明描述文字属于人该做的事。
 
 ---
 
