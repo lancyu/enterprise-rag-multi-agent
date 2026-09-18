@@ -390,7 +390,7 @@ app/tools → db                                                          ← �
 |---|---|---|
 | P0-1 | ✅ 已完成 | 13 类重复实现全部收敛为"唯一实现 + 其余委托"。4 类行为漂移按**更严格的一侧**钉住，每项都补了**反向验证过**的护栏（把修复退回 → 对应用例变红，已逐项实测）。新增两处实现 `app/utils/text.py`、`app/core/llm_access.py`、`app/utils/auth_header.py` |
 | P0-2 | ✅ 已完成 | 对外故障文案收敛到 `app/core/errors.py::public_detail`（固定前缀 + trace_id）。**实际修复面比审查时估计的大**：除 SSE 回显 `str(exc)` 外，还堵掉两条绕过异常分支的走私通道 —— `/workflow/execute` 原样透出内部 `error_msg`、`human_fallback_node` 把 `error_msg[:60]` 塞进随响应体下发的 `trace.detail`。新增 `tests/test_error_boundary.py`（11 项），逐条反向验证过；另加两条结构约束（边界层不绑定异常对象、凭证只经 `trace_ref` 取） |
-| P0-3 | ⏳ 待做 | |
+| P0-3 | ✅ 已完成 | 「格式 → 解析器」收敛为**唯一分发表** `_SUFFIX_LOADERS` + 唯一入口 `doc_loader.load_file`（`SUPPORTED_SUFFIX` 改为由它派生）；`knowledge_upload_file` 改走这个入口，不再自己写一份后缀分发。**根因**：上传那条落到最弱一级 `PyPDFLoader`、重建那条走完整三级降级，同一个 PDF 产出两份文本，重建会**静默覆盖**早先上传的内容。顺带把「过滤空白段落」从 `load_all_documents` 下沉到 `load_file`——留在调用方只会让上传链路漏掉它。新增 `tests/test_upload_rebuild_alignment.py`（8 项），**5 条反向验证全部命中**；其中「`SUPPORTED_SUFFIX` 是不是派生的」**只能用 AST 判据**（两边取值相等时 `==` 恒真，退回不会变红，第一版就踩了这个坑） |
 | P0-4 | ⏳ 待做 | |
 | P1-1 | ⚠️ **方向已订正** | 原写"建 CI"，与本仓库 2026-09-14 的**既定决定**（本仓库不开源，不重建 `.github/`、不建 pre-commit）直接冲突。改为**本地一键门禁**：把行号校验器纳入 pytest（四道 → 三道），单独脚本承载配置分区表那一类 |
 | P1-2 ~ P1-6 | ⏳ 待做 | 第 3 批 |

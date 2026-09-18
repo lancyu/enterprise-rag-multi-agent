@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from app import config
 from app.core.rag_engine import add_document, build_index, delete_document, get_stats, search
-from app.utils.doc_loader import SUPPORTED_SUFFIX, file_name, list_data_files
+from app.utils.doc_loader import SUPPORTED_SUFFIX, file_name, list_data_files, load_file
 from app.utils.logger import logger
 from app.utils.validator import KnowledgeSearchRequest, KnowledgeUploadRequest, sanitize_filename
 
@@ -99,23 +99,27 @@ async def knowledge_upload_file(request: Request, file: UploadFile = File(...)) 
     raw = await _read_limited(file, config.MAX_UPLOAD_BYTES)
 
     try:
-        if suffix == "pdf":
-            # PyPDFLoader 仅支持文件路径，先落盘到临时文件再解析
-            import tempfile
-            from pathlib import Path
+        # 解析走 `doc_loader.load_file` —— **与 /knowledge/rebuild 同一个入口**。
+        #
+        # 这里此前自己 `import PyPDFLoader` 直接 load，而那是 doc_loader 三级降级
+        # （pdfplumber → pypdf → PyPDFLoader）里**最弱的一级**。于是同一个 PDF：
+        # 上传入库得到纯文本（表格塌成一行行），重建入库得到正文 + Markdown 表格；
+        # 两份文本不同 → 切分不同 → 检索命中不同。更糟的是重建会**悄悄改掉**
+        # 早先上传那份文档的内容（P0-3）。
+        #
+        # 三种格式统一落盘再解析（而不是 pdf 落盘、其他两种直接 decode）：否则
+        # ".txt 走 TextLoader / 上传走 decode" 又是一处只在特定文件上才暴露的分叉。
+        import tempfile
+        from pathlib import Path
 
-            from langchain_community.document_loaders import PyPDFLoader
-
-            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                tmp.write(raw)
-                tmp_path = Path(tmp.name)
-            try:
-                docs = PyPDFLoader(str(tmp_path)).load()
-            finally:
-                tmp_path.unlink(missing_ok=True)
-            content = "\n".join(d.page_content for d in docs)
-        else:
-            content = raw.decode("utf-8", errors="ignore")
+        with tempfile.NamedTemporaryFile(suffix=f".{suffix}", delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = Path(tmp.name)
+        try:
+            docs = load_file(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        content = "\n".join(d.page_content for d in docs)
     except Exception:  # noqa: BLE001
         # 不回显解析异常原文（可能含临时文件路径等内部细节），详情已入日志
         logger.exception("文件解析失败：%s", filename)

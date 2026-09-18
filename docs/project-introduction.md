@@ -45,11 +45,11 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **16222 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **16269 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | 8 个 + 2 个条件分支 |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
-| 测试 | 32 个文件（28 个 `test_*.py`），`pytest` **514 项全绿** |
+| 测试 | 33 个文件（29 个 `test_*.py`），`pytest` **522 项全绿** |
 | 内置语料 | 12 个文档，切分后 **176 个片段** |
 
 ---
@@ -190,12 +190,12 @@
 | `app/main.py` | **1-240** | 应用装配：lifespan、中间件、路由注册、全局异常 |
 | `app/config.py` | **1-765** | 全局配置中心（所有环境变量集中于此） |
 
-### 3.2 `app/api/` — HTTP 接口层（1533 行）
+### 3.2 `app/api/` — HTTP 接口层（1537 行）
 
 | 文件 | 行号范围 | 路由前缀 | 职责 |
 |---|---|---|---|
 | `chat.py` | **1-465** | `/chat` | 问答（流式 + 非流式）、历史、反馈 |
-| `knowledge.py` | **1-178** | `/knowledge` | 知识库上传 / 删除 / 搜索 / 重建索引 |
+| `knowledge.py` | **1-182** | `/knowledge` | 知识库上传 / 删除 / 搜索 / 重建索引 |
 | `dify.py` | **1-379** | `/retrieval`、`/dify` | 把自己接成 Dify 的"外部知识库" |
 | `memory.py` | **1-134** | `/memory` | 记忆读写运维（灵魂、事实、画像、蒸馏） |
 | `workflow.py` | **1-152** | `/workflow` | 工作流状态查询与手动触发（拓扑声明在此，加载时与编译图做断言） |
@@ -306,7 +306,7 @@
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
-| `utils/doc_loader.py` | **1-298** | PDF/MD/TXT 解析（PDF 三级降级 + 表格转 Markdown + 图片 OCR） |
+| `utils/doc_loader.py` | **1-341** | PDF/MD/TXT 解析（PDF 三级降级 + 表格转 Markdown + 图片 OCR） |
 | `utils/validator.py` | **1-162** | 入参校验与注入过滤（Pydantic v2） |
 | `utils/cache.py` | **1-120** | 查询向量 LRU+TTL / 文档向量批量落盘 |
 | `utils/logger.py` | **1-74** | 日志：控制台 + 滚动文件 + trace_id 注入 |
@@ -488,7 +488,7 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 
 | 文件 | 关键行号 | 要点 |
 |---|---|---|
-| `knowledge.py` | 上传 `79-141`、删除 `145-148`、搜索 `152-162`、重建 `166-178` | 上传两道闸：先看 `Content-Length` 预检，再分块累加（`_read_limited:31-50`），**不能先全量读进内存再判大小**；`_REBUILD_LOCK:19` 保证重建索引串行 |
+| `knowledge.py` | 上传 `79-145`、删除 `149-152`、搜索 `156-166`、重建 `170-182` | 上传两道闸：先看 `Content-Length` 预检，再分块累加（`_read_limited:31-50`），**不能先全量读进内存再判大小**；`_REBUILD_LOCK:19` 保证重建索引串行。上传的正文解析走 `doc_loader.load_file`——**与重建路径同一个入口**（P0-3） |
 | `dify.py` | 检索 `210-261`、OpenAPI `283-358` | 见下方"score 归一化"说明 |
 | `memory.py` | soul 写入 `44-79` | `AUTH_ENABLED=false` 时直接 403——"一次改掉全站人格"的能力不该存在于无防护服务上 |
 | `workflow.py` | 拓扑校验 `59-80`、执行 `100-152` | `_validate_topology` 在模块加载时比对声明拓扑与真实图，防止前端面板与真实执行路径漂移 |
@@ -1703,24 +1703,35 @@ API 层其实已经取过一次历史了（放在 `GraphState.chat_history` 里�
 
 ### 4.10 通用工具 `app/utils/`
 
-#### 📍 `doc_loader.py`（1-298）—— 文档解析
+#### 📍 `doc_loader.py`（1-341）—— 文档解析
 
 | 组件 | 行号 |
 |---|---|
-| `_table_to_markdown` | 38-63 |
-| `_image_area` | 66-73 |
-| `_ocr_image` | 76-93 |
-| `_extract_page_images` | 96-136 |
-| `_load_pdf_pdfplumber` | 139-184 |
-| `_load_pdf_pypdf` | 187-202 |
-| `_load_pdf` | 205-221 |
-| `load_all_documents` | 235-270 |
+| `_table_to_markdown` | 40-65 |
+| `_image_area` | 68-75 |
+| `_ocr_image` | 78-95 |
+| `_extract_page_images` | 98-138 |
+| `_load_pdf_pdfplumber` | 141-186 |
+| `_load_pdf_pypdf` | 189-204 |
+| `_load_pdf` | 207-223 |
+| `load_file` | 252-283 |
+| `load_all_documents` | 286-313 |
+
+**格式 → 解析器只有一张表**：模块级 `_SUFFIX_LOADERS: Dict[str, Callable[[Path], List[Document]]]`
+把 `.pdf` / `.md` / `.markdown` / `.txt` 映到对应 loader，`SUPPORTED_SUFFIX` **从它派生**
+（`set(_SUFFIX_LOADERS)`），入口函数 `load_file`（252-283）是**唯一分发处**。
+为什么必须是唯一一处？**上传**与**重建**是两条链路，此前各写一份后缀分发：
+上传那条落到最弱一级 `PyPDFLoader`、重建那条走完整三级降级，于是**同一个 PDF 产出两份不同文本**，
+重建会悄悄覆盖早先上传的内容（且没有任何报错）。同理，「过滤空白段落」也下沉到这里——
+留在调用方（`load_all_documents`）只会让上传链路漏掉它。
+护栏是 `tests/test_upload_rebuild_alignment.py`，其中「`SUPPORTED_SUFFIX` 是派生的」这一条
+**必须用 AST 判据**：两边取值相等时 `==` 恒真，退回验证不会变红。
 
 **PDF 三级降级**：pdfplumber（能识别表格并转 Markdown）→
 pypdf（仅文本，表格退化成线性）→ LangChain `PyPDFLoader` 兜底。
 任何一级的 `ImportError` 或解析异常都落到下一级，**永不抛错打断主链路**。
 
-**表格转 Markdown**（23-48）：清洗空单元格 → 单元格内换行换成空格 →
+**表格转 Markdown**（40-65）：清洗空单元格 → 单元格内换行换成空格 →
 转义 `|` → 每行补齐到最大列数 → 首行作表头、第二行插 `|---|---|` 分隔线。
 这样渲染出来不会错位。
 
@@ -2039,12 +2050,12 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **514 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **522 passed** |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
-| 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（5 项发现 = 豁免清单 5 项） |
+| 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（6 项发现 = 豁免清单 6 项） |
 | 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
 | 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
-| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 616 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
+| **文档行号校验** | `python scripts/verify_doc_linenos.py` | 619 条声明全部一致（漂移后用 `scripts/fix_doc_linenos.py` 回填） |
 
 这些门禁原先由 `.github/workflows/ci.yml` 承载；该 CI 配置随仓库的开源外壳
 一并移除后，请在本地按上表命令**串行**执行（脚本只用标准库，无需额外依赖）。
@@ -2081,13 +2092,13 @@ open http://127.0.0.1:8001/static/index.html
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（16222 行）**
+**应用代码 `app/`（16269 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
 | `__init__.py` | 1 | `api/__init__.py` | 1 |
 | `api/chat.py` | 465 | `api/dify.py` | 379 |
-| `api/evaluation.py` | 81 | `api/knowledge.py` | 178 |
+| `api/evaluation.py` | 81 | `api/knowledge.py` | 182 |
 | `api/memory.py` | 134 | `api/routing.py` | 110 |
 | `api/test.py` | 33 | `api/workflow.py` | 152 |
 | `config.py` | 765 | `core/__init__.py` | 1 |
@@ -2122,7 +2133,7 @@ open http://127.0.0.1:8001/static/index.html
 | `rag/structure.py` | 334 | `static/gen_favicon.py` | 148 |
 | `tools/__init__.py` | 1 | `tools/sqlite_tools.py` | 255 |
 | `utils/__init__.py` | 1 | `utils/cache.py` | 120 |
-| `utils/doc_loader.py` | 298 | `utils/embedding.py` | 22 |
+| `utils/doc_loader.py` | 341 | `utils/embedding.py` | 22 |
 | `utils/logger.py` | 74 | `utils/validator.py` | 162 |
 | `tests/__init__.py` | 1 | `tests/conftest.py` | 85 |
 | `tests/deadcode_allowlist.py` | 92 | `tests/fakes.py` | 102 |
@@ -2140,6 +2151,7 @@ open http://127.0.0.1:8001/static/index.html
 | `tests/test_span_tree_smoke.py` | 264 | `tests/test_sqlite_tools.py` | 258 |
 | `tests/test_structure.py` | 203 | `tests/test_structure_chunking.py` | 178 |
 | `tests/test_tool_agent.py` | 720 | `tests/test_vector_store_backends.py` | 381 |
+| `tests/test_upload_rebuild_alignment.py` | 209 | | |
 | `scripts/baseline_snapshot.py` | 133 | `scripts/check_vector_db.py` | 307 |
 | `scripts/chunk_metrics.py` | 171 | `scripts/chunking_ab.py` | 326 |
 | `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
@@ -2165,7 +2177,7 @@ open http://127.0.0.1:8001/static/index.html
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **616 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+它对本文的 **619 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
 覆盖十三类写法：
 
 | # | 声明类型 | 例子 |
@@ -2187,7 +2199,7 @@ python scripts/verify_doc_linenos.py
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：616 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：619 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
 是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
 

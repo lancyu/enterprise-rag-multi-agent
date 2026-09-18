@@ -7,17 +7,19 @@ PDF 解析策略（按能力从强到弱自动降级，永不抛错打断主链�
                      开启 PDF_IMAGE_EXTRACTION 时还能抽取内嵌图片（T6-2）；
     2. pypdf       —— 纯 Python，仅做文本提取（表格退化为线性文本）；
     3. PyPDFLoader —— langchain_community 兜底，行为与历史实现一致。
+
+**格式 → 解析器只有一处映射**（``_SUFFIX_LOADERS``，见 ``load_file``）。
+调用方一律走 ``load_file``，不要自己挑 loader：上传接口这么干过一次，
+两条入库路径给出了两份不同的文本（P0-3，详见 ``load_file`` 的 docstring）。
 """
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, Dict, List, Optional
 
 from langchain_core.documents import Document
 
 from app import config
 from app.utils.logger import logger
-
-SUPPORTED_SUFFIX = {".pdf", ".md", ".markdown", ".txt"}
 
 
 def file_name(source: str) -> str:
@@ -232,6 +234,55 @@ def _load_text(file_path: Path) -> List[Document]:
     return TextLoader(str(file_path), encoding="utf-8").load()
 
 
+# ---------------------------------------------------------------------------
+# 格式 → 解析器：**唯一的映射表**
+# ---------------------------------------------------------------------------
+_SUFFIX_LOADERS: Dict[str, Callable[[Path], List[Document]]] = {
+    ".pdf": _load_pdf,
+    ".md": _load_markdown,
+    ".markdown": _load_markdown,
+    ".txt": _load_text,
+}
+
+#: 支持的格式白名单。**从上面的分发表派生**而不是另写一份字面量集合：
+#: 两个集合曾经各写一遍，加一种格式只改其中一处时，另一条路径会静默拒绝它。
+SUPPORTED_SUFFIX = set(_SUFFIX_LOADERS)
+
+
+def load_file(file_path: Path) -> List[Document]:
+    """按后缀加载单个文件 —— 格式分发的**唯一入口**。
+
+    为什么必须是公开的单一入口（而不是让调用方自己挑 loader）
+    --------------------------------------------------------
+    上传接口 ``/knowledge/upload-file`` 曾经自己 ``import PyPDFLoader`` 然后直接
+    load —— 那恰好是 ``_load_pdf`` 三级降级里**最弱的一级**。于是同一个 PDF：
+
+    - 走上传入库：PyPDFLoader 抽的纯文本（表格塌成一行行）；
+    - 走 ``/knowledge/rebuild`` 重建：pdfplumber 抽的正文 + Markdown 表格。
+
+    两份文本不同 → 切分不同 → 检索命中不同。更糟的是**重建会悄悄改掉**早先上传
+    那份文档的内容：用户没动任何文件，同一个问题的答案却变了。
+    这不是"两条路径实现得不一样"，而是"入库的真相取决于你从哪个口进的库"。
+
+    ``.md`` / ``.txt`` 有同样的隐患，只是历史上两条路径恰好一致、没暴露出来，
+    所以这里连它们一起收进来 —— 判据只剩一条：**后缀 → 解析器**。
+
+    过滤空白段落也放在这里（原来是 ``load_all_documents`` 自己做的）：那个过滤
+    同样属于"这份文件解析出来的文本长什么样"。留在调用方，上传路径就会漏掉它，
+    于是"PDF 里夹一页空白"又变成两条路径文本不同 —— 而那是最难查的一种不同。
+
+    Raises:
+        ValueError: 后缀不在 ``SUPPORTED_SUFFIX`` 里。刻意不静默退化成纯文本：
+            一个拼错的后缀被当成 txt 读进来，表现为"文档入库了但检索不到"。
+    """
+    loader = _SUFFIX_LOADERS.get((file_path.suffix or "").lower())
+    if loader is None:
+        raise ValueError(
+            f"不支持的文件格式：{file_path.suffix!r}（支持 {sorted(SUPPORTED_SUFFIX)}）"
+        )
+    return [d for d in loader(file_path) if d.page_content and d.page_content.strip()]
+
+
 def load_all_documents(data_dir: Path | None = None) -> List[Document]:
     """递归扫描知识库目录，加载所有支持格式的文档。"""
     if data_dir is None:
@@ -245,22 +296,14 @@ def load_all_documents(data_dir: Path | None = None) -> List[Document]:
     for file_path in sorted(data_dir.rglob("*")):
         if file_path.is_dir() or file_path.name.startswith("."):
             continue
-        suffix = file_path.suffix.lower()
-        if suffix not in SUPPORTED_SUFFIX:
+        if file_path.suffix.lower() not in SUPPORTED_SUFFIX:
             continue
         try:
-            if suffix == ".pdf":
-                docs = _load_pdf(file_path)
-            elif suffix in {".md", ".markdown"}:
-                docs = _load_markdown(file_path)
-            else:
-                docs = _load_text(file_path)
+            docs = load_file(file_path)
 
             for doc in docs:
                 doc.metadata.setdefault("source", str(file_path))
                 doc.metadata["file_name"] = file_path.name
-            # 过滤空白内容
-            docs = [d for d in docs if d.page_content and d.page_content.strip()]
             all_docs.extend(docs)
             logger.info("已加载文档：%s（%d 段）", file_path.name, len(docs))
         except Exception:  # noqa: BLE001
