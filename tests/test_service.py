@@ -183,8 +183,24 @@ def main() -> int:
     def t_wf_status():
         code, d = client.get("/workflow/status")
         assert code == 200, f"HTTP {code}"
-        assert len(d.get("nodes", [])) == 5, f"节点数异常：{len(d.get('nodes', []))}"
-        return f"{len(d['nodes'])} 节点 / {len(d['branches'])} 分支"
+
+        # 这里原写成 `len(nodes) == 5`（五个 Agent 时代的数字）。图后来长到 9 个节点，
+        # 于是这条断言一直红着而没人发现——写死的数字就是这么失效的。
+        # 改为校验**拓扑自洽**（不需要知道总共几个节点），并把五个子 Agent 的在场
+        # 当作硬要求。节点总数由 pytest 侧的 tests/test_topology_declaration.py 守。
+        nodes = {n["name"] for n in d.get("nodes", [])}
+        assert nodes, "拓扑声明为空"
+        assert d.get("entry_point") in nodes, (
+            f"入口 {d.get('entry_point')!r} 不在节点表里：{sorted(nodes)}"
+        )
+        agents = {"smalltalk", "out_of_scope", "simple_rag", "complex_rag", "tool"}
+        missing = agents - nodes
+        assert not missing, f"五个子 Agent 缺 {sorted(missing)}"
+        for br in d.get("branches", []):
+            assert br["from"] in nodes, f"条件边出发节点 {br['from']!r} 不在节点表里"
+            unknown = [r for r in br.get("routes", []) if r != "END" and r not in nodes]
+            assert not unknown, f"条件边 {br['from']} 指向未知节点：{unknown}"
+        return f"{len(nodes)} 节点 / {len(d['branches'])} 分支"
 
     def t_wf_exec():
         code, d = client.post("/workflow/execute", {"query": "VPN 连接不上怎么办"})

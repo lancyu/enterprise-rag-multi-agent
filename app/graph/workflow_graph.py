@@ -1,6 +1,6 @@
 """工作流组装编译 —— 构建企业级 LangGraph 有向图。
 
-拓扑结构（9 节点 / 4 条件分支）::
+拓扑结构（9 节点 / 3 条件边）::
 
     memory_load（身份解析 + 长期记忆）
       → router（路由 Agent：意图识别 + 边界管控）
@@ -71,6 +71,23 @@ NODE_NAMES: tuple = (
     "generate_answer",
     "human_fallback",
 )
+
+
+def conditional_branch_count(compiled) -> int:
+    """从**编译图**派生「有几个条件分支点」——不写死字面量。
+
+    为什么不能直接数边：LangGraph 的 ``get_graph()`` 会把一条条件边按目标节点
+    **展开**成多条（``router`` 那一条展开成 5 条），边长 5+4+2=11。按**出发节点**
+    去重才是「有几个条件分支点」——本图是 3（``router`` / ``tool`` /
+    ``generate_answer``），与 ``app/graph/edges.py`` 的「三条条件边」一致。
+
+    为什么要派生而不是写常量：这个数字曾被写死为 4，而实际一直是 3，于是启动日志、
+    本模块 docstring、前端横幅三处**一起**错，与 README / project-introduction 的
+    「3 条条件边」自相矛盾（P0-5 记「同一仓库 5 种说法」）。数字只要还能被写死，
+    就还会漂——这里改成从编译产物读，改图时不可能忘记同步。
+    """
+    edges = compiled.get_graph().edges
+    return len({edge.source for edge in edges if getattr(edge, "conditional", False)})
 
 
 def _wire(graph: StateGraph, *, generation_target: str) -> None:
@@ -145,7 +162,10 @@ def build_workflow_graph():
     graph = StateGraph(GraphState)
     _wire(graph, generation_target="generate_answer")
     compiled = graph.compile()
-    logger.info("LangGraph 工作流编译完成：%d 节点 / 4 条件分支", len(NODE_NAMES))
+    logger.info(
+        "LangGraph 工作流编译完成：%d 节点 / %d 条件边",
+        len(NODE_NAMES), conditional_branch_count(compiled),
+    )
     return compiled
 
 

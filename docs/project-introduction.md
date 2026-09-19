@@ -5,7 +5,7 @@
 >
 > | 文档 | 侧重 |
 > |---|---|
-> | `README.md`（731 行） | 怎么装、怎么跑、有哪些接口 |
+> | `README.md`（894 行） | 怎么装、怎么跑、有哪些接口 |
 > | `项目学习指南.md`（965 行） | 面试问答、话术素材、必背数字 |
 > | **本文**（`docs/project-introduction.md`） | **每个模块干什么、代码在哪几行、底层用了什么知识** |
 >
@@ -45,7 +45,7 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **16831 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **16851 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | **9 个节点 + 3 条条件边** |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
@@ -215,14 +215,14 @@
 > 把"这句话会被判成哪条路、凭什么"逐条摊开。**生产只采信它的前两层**
 > （锚定 + 词面，零成本零模型），判不了的交回模型——**先能看清，再敢切换**。
 
-### 3.3 `app/graph/` — LangGraph 编排层（1030 行）
+### 3.3 `app/graph/` — LangGraph 编排层（1050 行）
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
 | `state.py` | **1-169** | 全局状态 `GraphState` + 初始态工厂（`scene` 与 `intent_type` 的分工见模块 docstring） |
 | `nodes.py` | **1-573** | 9 个节点的实现（含五个 Agent） |
 | `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
-| `workflow_graph.py` | **1-192** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
+| `workflow_graph.py` | **1-212** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
 ### 3.4 `app/core/` — 调度与基础能力（5741 行）
 
@@ -565,7 +565,7 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 | 业务工具**执行**失败 | 不能 | 转人工兜底 |
 | 参数不合 schema / 护栏拒绝 | —— | 归 `rejected`（模型侧问题），**不转人工**，让模型自我纠正或向用户追问 |
 
-#### 📍 `app/graph/edges.py`（1-95）与 `workflow_graph.py`（1-192）
+#### 📍 `app/graph/edges.py`（1-95）与 `workflow_graph.py`（1-212）
 
 **条件边就是普通函数**：读 state，返回一个字符串，LangGraph 拿这个字符串去映射表里找下一个节点。
 
@@ -579,11 +579,15 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 改道哪个分支由 `tool_route_edge` 决定。理由不是洁癖——
 拓扑必须完整地留在拓扑里，读图的人才能看见"改道"这件事每天都在发生。
 
-**两个编译产物共用同一个装配函数**：`_wire(graph, generation_target=...)`（76-140）认的是
-「证据出口通向哪」这一个差异，于是 `build_workflow_graph`（143-149，9 节点）与
-`build_pre_generation_graph`（152-163，8 节点）不可能漂移。流式链路**不可能**重抄业务逻辑。
+**两个编译产物共用同一个装配函数**：`_wire(graph, generation_target=...)`（93-157）认的是
+「证据出口通向哪」这一个差异，于是 `build_workflow_graph`（160-169，9 节点）与
+`build_pre_generation_graph`（172-183，8 节点）不可能漂移。流式链路**不可能**重抄业务逻辑。
 
-**⚠️ 注意**：`get_mermaid()`（172-192）返回的是**手写的常量字符串**，不是从编译图自动导出的。
+**拓扑计数不许写死**：`conditional_branch_count()`（76-90）从**编译图**按「出发节点」
+去重数条件分支点。注意不能直接数边——LangGraph 会把一条条件边按目标展开成多条
+（`router` 那一条展开成 5 条），边长 5+4+2=11，而分支点只有 3 个。启动日志用的就是它。
+
+**⚠️ 注意**：`get_mermaid()`（192-212）返回的是**手写的常量字符串**，不是从编译图自动导出的。
 拓扑改了如果忘了同步这里，前端展示的流程图就会和真实执行路径不一致。
 `app/api/workflow.py` 的 `NODE_LABELS` 会在模块加载时拿它与编译图的节点集合做断言，
 漂移会在启动日志里告警——但那只覆盖节点集合，覆盖不到连线。
@@ -2159,7 +2163,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（16831 行）**
+**应用代码 `app/`（16851 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -2186,7 +2190,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
 | `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
 | `graph/nodes.py` | 573 | `graph/state.py` | 169 |
-| `graph/workflow_graph.py` | 192 | `main.py` | 240 |
+| `graph/workflow_graph.py` | 212 | `main.py` | 240 |
 | `memory/__init__.py` | 185 | `memory/chat_history.py` | 70 |
 | `memory/consolidator.py` | 154 | `memory/dream.py` | 148 |
 | `memory/long_term.py` | 178 | `memory/short_term.py` | 179 |
@@ -2214,7 +2218,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `tests/test_meta_align.py` | 132 | `tests/test_multi_agent.py` | 953 |
 | `tests/test_parent_chunk.py` | 112 | `tests/test_pdf_image.py` | 97 |
 | `tests/test_rag.py` | 204 | `tests/test_routing_funnel.py` | 1413 |
-| `tests/test_self_check.py` | 60 | `tests/test_service.py` | 247 |
+| `tests/test_self_check.py` | 60 | `tests/test_service.py` | 263 |
 | `tests/test_short_term_symmetry.py` | 284 | `tests/test_soft_warnings.py` | 253 |
 | `tests/test_soul_write.py` | 124 | `tests/test_span_tree_smoke.py` | 264 |
 | `tests/test_sqlite_tools.py` | 258 | `tests/test_structure.py` | 203 |
@@ -2258,7 +2262,7 @@ python scripts/verify_doc_linenos.py
 | 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-744）` |
 | 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 231-240 |
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:131-150` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（731 行）、`app/config.py`（828 行） |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（894 行）、`app/config.py`（828 行） |
 | 9 | 区域行号表（裸区间） | `287-342` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:244-319` |
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
