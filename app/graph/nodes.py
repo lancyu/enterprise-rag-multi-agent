@@ -9,8 +9,11 @@
        ├ complex_rag   复杂 RAG Agent：拆解 → 多次检索 → 合并
        ├ tool          工具 Agent：function calling（见 app/core/tool_agent.py）
        └ out_of_scope  **越界拦截**：就地给出统一回复，不进任何子 Agent
-    3. generate_answer L4 受控生成（引用 + 置信度 + 拒答）
-    4. human_fallback  异常兜底
+    3. verifier        **证据校验（按需）**：三个证据出口（两个检索 Agent + 工具
+                       Agent）都汇到这里；有理由怀疑时才判证据对不对，没可疑迹象就
+                       零代价跳过（唯一会让图**退回 router 重判**的节点）
+    4. generate_answer L4 受控生成（引用 + 置信度 + 拒答）
+    5. human_fallback  异常兜底
 
 与上一版（单 Agent）的差别
 --------------------------
@@ -22,6 +25,21 @@ function calling 决策里既决定"要不要检索"又决定"要不要查业务
 拆成五个之后，每一类失败都有归属：寒暄走模板（不可能失败）、越界在入口拦下
 （不消耗任何下游预算）、检索失败降级为"没找到"（诚实）、业务数据查不到转人工
 （不能拿"知识库没找到"糊弄）。
+
+``verifier`` 补的是**最后一类没有归属的失败**：证据取回了、结构完好、字段齐全，
+语义上却答非所问。它同时承担"下游否决上游"的出口——判为不符时把事实退回
+``router`` 重判（预算见 ``config.ROUTE_RETRY_BUDGET``）。
+
+**三个证据出口都归它管**（含工具链路）。"工具查错了人"（用户问部门、模型查了
+年假）这一类**没有本地信号**，按需路径兜不住，要那种强度得切
+``VERIFIER_MODE=always``（对三条链路都生效，代价是每轮工具请求多付一次复核）；
+有本地信号的那些轮次（调用被护栏拒绝 / 执行抛异常 / 正文回捞 / 路由摇摆）则会
+被自动复核。完整的取舍过程写在 ``app/graph/edges.py::tool_route_edge`` 里——
+**这条边在 2026-09-24 被摘掉过又接回来，别只看结论不看过程。**
+
+即使对检索链路，它也是**修复手段，不是常规工序**：大多数轮次的检索是对的，
+每轮都请裁判等于把"大多数时候不需要的服务"变成固定成本。所以它默认**按需出手**
+（``VERIFIER_MODE=auto``），判据见 ``app/core/verifier.py::should_verify``。
 
 两个出口（本文件最需要看懂的一处）
 ----------------------------------
@@ -48,6 +66,7 @@ from typing import Any, Dict, List
 # ``get_tool_results`` 刻意**不在这里导入**：证据由子 Agent 从作用域读出后
 # 挂在返回值上带出（见 ``ToolDecision.docs`` 的说明）。若这里再读一次作用域，
 # 就等于又依赖「当前 context 是哪一个」——而跨上下文读不到证据正是踩过的坑。
+from app.core.prompts import render as render_prompt
 from app.core.request_ctx import (
     reset_request_context,
     set_allowed_sources,
@@ -68,6 +87,7 @@ from app.core.sub_agents import (
 )
 from app.core.tool_agent import run_tool_agent
 from app.core.tracing import span
+from app.core.verifier import verify_evidence
 from app.graph.state import GraphState
 from app.memory import get_memory_context, get_short_term_memory
 from app.rag.generator import prepare_generation, stream_answer_tokens
@@ -138,23 +158,44 @@ def router_node(state: GraphState) -> GraphState:
     「幻觉管控集中在入口层」在这里落地：越界问题被判定后由
     ``out_of_scope_node`` 用**常量话术**回复，不经过任何模型——一个只被
     判别而不被生成的回答，不可能有幻觉。
+
+    本节点**会被执行第二次**：证据校验判定"取回的证据答的不是这个问题"时，
+    图会把事实退回这里重判（见 ``app/graph/edges.py::verifier_route_edge``）。
+    届时要带上 ``router_retry`` 提示词——**不告诉模型上一轮判了什么、为什么被
+    退回来**，二次判定只会给出同一个结论，白绕一圈还多花一次模型调用。
     """
     new_state = dict(state)
     start = time.perf_counter()
+    # 被退回时才构造反馈块。判据只看 ``evidence_aligned is False``（事实），
+    # 不看"这是第几轮"（那是边的事）。
+    feedback = ""
+    if state.get("evidence_aligned") is False:
+        feedback = render_prompt(
+            "router_retry",
+            previous_scene=state.get("scene") or "-",
+            verify_reason=state.get("verify_reason") or "取回的证据与问题不符",
+        )
     with span("router") as s:
         decision = route_query(
             query=state["user_query"],
             chat_history=state.get("chat_history", []),
             memory_context=state.get("memory_context", ""),
+            feedback=feedback,
         )
         s.attrs["scene"] = decision.scene
         s.attrs["source"] = decision.source
         s.attrs["degraded"] = decision.degraded
+        s.attrs["retry"] = bool(feedback)
 
         new_state["scene"] = decision.scene
         new_state["scene_reason"] = decision.reason
         new_state["scene_confidence"] = decision.confidence
         new_state["scene_source"] = decision.source
+        # 漏斗"为什么没判"要单独留痕：下游的证据校验只凭它区分「路由摇摆」
+        # 与「只是没命中例句」（见 app/core/verifier.should_verify）。
+        # None 落成空串，与 state 里该字段的初值同一形态——None 与 "" 混用
+        # 会让"取不到这个信息"和"本地快通道判了"在观测上同形。
+        new_state["route_gray_reason"] = decision.gray_reason or ""
         # route_decision 是**本轮决策摘要**：路由 Agent 判定什么场景、
         # 后续环节又发生了哪些降级。两个写入点（本节点与 tool_node）共用它，
         # 因为对前端而言"这轮为什么走成这样"就该是一个对象。
@@ -376,6 +417,10 @@ def tool_node(state: GraphState) -> GraphState:
         s.attrs["steps"] = len(decision.steps)
         s.attrs["tools"] = decision.tool_names()
         s.attrs["degraded"] = decision.degraded
+        # 模型声明「一次调用就够」而省掉了后续决策轮。省下的是一次真实模型往返
+        # （1.8~2.9s），不看这个埋点就说不清"省了多少、省错了几次"——
+        # 与 `discarded_chars` 是同一类观测点。
+        s.attrs["plan_shortcut"] = decision.plan_shortcut
 
         new_state["agent_steps"] = [step.to_dict() for step in decision.steps]
         new_state["soft_warnings"] = [
@@ -475,7 +520,122 @@ def tool_node(state: GraphState) -> GraphState:
 
 
 # =============================================================
-# 3. 答案生成节点（RAG L4）
+# 3. 证据校验节点（生成之前）
+# =============================================================
+#: ``evidence_aligned`` 三态 → 给人看的说法。**三个键缺一不可**：
+#: 用 ``'对齐' if aligned else '不符'`` 的写法会把 ``None`` 说成"不符"，
+#: 而在按需触发下 ``None`` 才是常态 —— 那会让 trace 里几乎每一步都写着
+#: "证据不符"，比不写更糟。
+_VERDICT_TEXT: Dict[Any, str] = {None: "未做校验", True: "证据对齐", False: "证据不符"}
+
+
+def verifier_node(state: GraphState) -> GraphState:
+    """**这份证据，真的回答了用户这个问题吗。**
+
+    只做这一件事，**不生成任何用户可见的文本**（判据与降级策略见
+    ``app/core/verifier.py``）。本节点永不失败：判不了就按"对齐"放行。
+
+    它是**修复手段，不是常规工序**：是否动手由 ``should_verify`` 按本轮已经
+    算出来的事实决定（可降级故障 / 软回退片段 / **路由摇摆**），判据说不需要就
+    **零代价跳过**。从"每轮都查"改成"按需查"的动因是线上实测：20 次采样 0 次
+    判出不符，却稳定占掉首 token 路径上 1.2~3.0 秒。
+
+    它**由三个证据出口进入**（``simple_rag`` / ``complex_rag`` / ``tool``）。工具
+    链路这一条在 2026-09-24 被摘掉过又接了回来：摘掉判据（"走了工具链路就复核"）
+    解决的是"每轮都白付 1551ms"，而**连边一起摘**就把"出状况时有没有人复核"也丢掉了
+    —— 留痕不等于兜底。现在边在、判据仍按需，完整的三段过程与覆盖面取舍见
+    ``app/graph/edges.py::tool_route_edge``（**别只看结论不看过程**）。
+
+    注意工具轮的证据载体是 ``tool_result`` 而非 ``retrieve_docs``（工具 Agent
+    不产检索片段，``docs`` 恒为空），所以调用 ``verify_evidence`` 时**两个都要传**
+    —— 少传一个，``should_verify`` 会在"没有证据可校验"上短路，边等于白接，
+    而且症状与"干净轮次跳过"完全同形。
+
+    工具不可用**而改道简单 RAG** 的那一轮同样会到这里——那一次的证据是检索来的，
+    且带着"退而求其次"的背景，正该复核。
+
+    为什么触发判据读的是 ``route_gray_reason`` 而不是 ``scene_source``
+    ----------------------------------------------------------------
+    "路由不是本地快通道拍的板"看着像"路由可能判错"，但它实测是个哑信号：
+    漏斗的地板+边际双门槛很紧，27 条正常提问里只有 4 条被本地采信，于是这条
+    判据把 **85%** 的正常轮次都拉回来复核——而那 23 条里"在通道之间摇摆"的
+    是 **0 条**，全是"词面分低于地板"。真正该问的是"这次判定稳不稳"，
+    答案是 ``route_gray_reason`` 的 ``tight_margin``（见 ``should_verify``）。
+
+    ``evidence_aligned`` 是**三态**，绝不能压成布尔：
+
+    - ``None`` —— **没做校验**（按需判据说不需要 / 校验已关闭 / 没有证据可校验）；
+    - ``True`` —— 校验过，判定对齐（或降级放行）；
+    - ``False`` —— 校验过，判定**不符**。只有它会让条件边改道。
+
+    把 ``None`` 当成 ``False`` 会把"没校验"变成"重路由一次"：凭空多一轮检索
+    与模型调用，而问题多半在证据侧（知识库里就是没有），重路由解决不了。
+    这正是 ``app/graph/edges.py::verifier_route_edge`` 判据写作 ``is False``
+    而不是真值判断的原因 —— 现在按需跳过会让 ``None`` 变成**常态**，
+    这条判据的重要性比"每轮都查"的时期更高。
+
+    跳过时 ``verify_source`` 是 ``verifier:skipped``，而 ``trace`` 记的是
+    「未做校验」而不是「证据对齐」：**"没查"与"查过没问题"必须在观测上可分**，
+    否则前端面板会把一个大面积跳过的链路显示成"全部对齐"。
+
+    ``reroute_count`` 只在这里 +1（判定不符时），边只读不写——见
+    ``app/graph/state.py`` 对该字段的说明。
+    """
+    new_state = dict(state)
+    start = time.perf_counter()
+    with span("verifier_node") as s:
+        result = verify_evidence(
+            query=state["user_query"],
+            docs=state.get("retrieve_docs", []),
+            # 工具链路的证据只在这里（docs 恒为空）；漏传 → 工具轮静默跳过复核。
+            tool_result=state.get("tool_result"),
+            route_gray_reason=state.get("route_gray_reason", ""),
+            soft_warnings=state.get("soft_warnings"),
+        )
+        s.attrs["aligned"] = result.aligned
+        s.attrs["source"] = result.source
+        s.attrs["trigger"] = result.trigger
+        new_state["evidence_aligned"] = result.aligned
+        new_state["verify_reason"] = result.reason
+        new_state["verify_source"] = result.source
+
+    if result.aligned is False:
+        new_state["reroute_count"] = int(state.get("reroute_count") or 0) + 1
+
+    if result.degraded:
+        # 校验没生效是**可降级故障**：答案照常产出，但"证据对不对"这件事本轮
+        # 没人管了。它不报错、不影响能否回答，正是最容易静默累积的一类，
+        # 所以必须进 soft_warnings（口径见 state.py 对该字段的说明）。
+        #
+        # 注意**按需跳过不走这里**：跳过是本轮的正常结论，不是故障。
+        # 把两者混起来，"今天有多少轮没人校验"就再也算不清了。
+        new_state["soft_warnings"] = [
+            *(new_state.get("soft_warnings") or []),
+            f"证据校验未生效（{result.source}）：{result.reason}",
+        ]
+
+    new_state["route_decision"] = {
+        **new_state.get("route_decision", {}),
+        "evidence_aligned": result.aligned,
+        "verify_source": result.source,
+        "verify_trigger": result.trigger,
+    }
+    new_state["trace"] = _trace(
+        new_state,
+        "verifier",
+        f"{_VERDICT_TEXT[result.aligned]}（{result.source}）",
+        _elapsed_ms(start),
+    )
+    if result.aligned is False:
+        logger.info(
+            "证据校验判定不符（第 %s 次）：%s",
+            new_state["reroute_count"], result.reason or "-",
+        )
+    return new_state
+
+
+# =============================================================
+# 4. 答案生成节点（RAG L4）
 # =============================================================
 def build_generation_inputs(state: GraphState) -> Dict[str, Any]:
     """组装 L4 生成的输入：引用清单 + 置信度 + 拒答判定 + prompt 变量。
@@ -552,7 +712,7 @@ def generate_answer_node(state: GraphState) -> GraphState:
 
 
 # =============================================================
-# 4. 人工兜底节点
+# 5. 人工兜底节点
 # =============================================================
 def human_fallback_node(state: GraphState) -> GraphState:
     new_state = dict(state)

@@ -5,7 +5,7 @@
 >
 > | 文档 | 侧重 |
 > |---|---|
-> | `README.md`（894 行） | 怎么装、怎么跑、有哪些接口 |
+> | `README.md`（948 行） | 怎么装、怎么跑、有哪些接口 |
 > | `项目学习指南.md`（965 行） | 面试问答、话术素材、必背数字 |
 > | **本文**（`docs/project-introduction.md`） | **每个模块干什么、代码在哪几行、底层用了什么知识** |
 >
@@ -35,7 +35,7 @@
 | 层次 | 选型 | 说明 |
 |---|---|---|
 | Web 框架 | **FastAPI** | 异步、自带 OpenAPI 文档 |
-| 工作流引擎 | **LangGraph** | 把问答拆成 9 个节点组成的有向图 |
+| 工作流引擎 | **LangGraph** | 把问答拆成 10 个节点组成的有向图 |
 | 大模型 | **OpenAI 兼容协议**（默认 Moonshot / Kimi） | 换供应商只改 `.env` |
 | 向量检索 | **Milvus** / **Chroma** / 内置内存库 | 三后端可切（`VECTOR_DB_TYPE`），默认内存库零依赖即可跑 |
 | 词面检索 | **自研 BM25 倒排索引** | 不引入 Elasticsearch，250 行搞定 |
@@ -45,11 +45,11 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **16851 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **18149 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
-| LangGraph 节点 | **9 个节点 + 3 条条件边** |
+| LangGraph 节点 | **10 个节点 + 4 条条件边** |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
-| 测试 | 36 个文件（32 个 `test_*.py`），`pytest` **565 项全绿** |
+| 测试 | 40 个文件（36 个 `test_*.py`），`pytest` **679 项全绿** |
 | 内置语料 | 12 个文档，切分后 **176 个片段** |
 
 ---
@@ -62,7 +62,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  ① 接口层        app/api/            8 个 router，收 HTTP 请求 │
 ├─────────────────────────────────────────────────────────────┤
-│  ② 编排层        app/graph/          LangGraph 8 节点有向图    │
+│  ② 编排层        app/graph/          LangGraph 10 节点有向图   │
 ├─────────────────────────────────────────────────────────────┤
 │  ③ 调度层        app/core/           意图路由 / 模型选型 / 级联 │
 ├─────────────────────────────────────────────────────────────┤
@@ -75,7 +75,7 @@
 │                  app/utils/          加载 / 缓存 / 校验 / 日志  │
 └─────────────────────────────────────────────────────────────┘
                           ▲
-                          │ 全局配置：app/config.py（828 行）
+                          │ 全局配置：app/config.py（895 行）
                           │ 贯穿所有层：app/core/tracing.py（全链路 span 树）
 ```
 
@@ -99,8 +99,10 @@
 | 5.2 | 节点② `router` —— **路由 Agent**：先走零模型本地漏斗，判不了才调模型；场景五选一，越界就地拦下 | `app/core/router_agent.py` |
 | 5.3 | 条件边 —— 按场景分发，五路互斥 | `app/graph/edges.py` |
 | 5.4 | 节点③④⑤⑥ —— 五个子 Agent 中的某一个执行（见 §2.4） | `app/core/sub_agents.py` / `tool_agent.py` |
-| 5.5 | 节点⑦ `generate_answer` —— 受控生成（引用 + 置信度 + 拒答） | `app/rag/generator.py` |
-| 5.6 | 条件边 + 节点⑧ `human_fallback` —— 异常才转人工 | `app/graph/edges.py` → `app/graph/nodes.py` |
+| 5.5 | 节点⑦ `verifier` —— **证据校验**：生成之前只判断「取回的证据真的回答了问题吗」 | `app/core/verifier.py` |
+| 5.6 | 条件边 —— 判定不符且还有预算 → **退回 `router` 重判**；否则进生成 | `app/graph/edges.py` |
+| 5.7 | 节点⑨ `generate_answer` —— 受控生成（引用 + 置信度 + 拒答） | `app/rag/generator.py` |
+| 5.8 | 条件边 + 节点⑩ `human_fallback` —— 异常才转人工 | `app/graph/edges.py` → `app/graph/nodes.py` |
 | 6 | 结束 trace，把 span 树落盘 `logs/trace.jsonl` | `app/core/tracing.py` |
 | 7 | 保存本轮两条消息到 Redis | `app/memory/chat_history.py` |
 | 8 | 若历史过长，压缩归档（异步不阻塞响应） | `app/memory/__init__.py` |
@@ -123,7 +125,7 @@
 | **L4** | 生成控制 | `app/rag/generator.py` | 403 | 带引用地作答，或礼貌拒答 |
 | **L5** | 评估迭代 | `app/rag/evaluator.py` | 384 | 量化效果，回流调参 |
 
-### 2.4 LangGraph 9 节点工作流（五 Agent 协作）
+### 2.4 LangGraph 10 节点工作流（五 Agent + 证据校验）
 
 定义在 `app/graph/workflow_graph.py`，节点实现全在 `app/graph/nodes.py`，
 分发规则在 `app/graph/edges.py`。**权威设计文档见
@@ -148,28 +150,41 @@
 │模板直出 ││常量话术 ││单次检索 ││拆解+多检索││FC 调用 │
 └───┬────┘└────┬────┘└────┬────┘└─────┬────┘└───┬────┘
     │          │          │            │         │
-    │          │          └─────┬──────┘    tool_route_edge
-    │          │                ▼                │（四路）
-    │          │        ┌──────────────┐   ┌─────┴─────┬──────────┬─────────┐
-    │          │        │generate_     │   ▼           ▼          ▼         ▼
-    │          │        │answer ⑦      │ 反问用户  决策失败   不支持FC  有证据
-    │          │        │受控生成      │  → END   → ⑧人工兜底 →simple_rag →生成
+    │          │          │            │    tool_route_edge
+    │          │          │            │    ┌────┴─────┬──────────┬─────────┐
+    │          │          │            │    ▼          ▼          ▼         ▼
+    │          │          │            │  反问用户  决策失败   不支持FC  有证据
+    │          │          │            │   → END   → ⑧人工兜底 →simple_rag  │
+    │          │          └─────┬──────┘                                  │
+    │          │                ▼                                         │
+    │          │        ┌──────────────┐◄─────────────────────────────────┘
+    │          │        │  verifier ⑦  │ ⑦ 证据校验：生成前只判断一件事——
+    │          │        │  生成前裁决  │    「取回的证据真的回答了问题吗」
     │          │        └──────┬───────┘
-    │          │     error_route_edge
-    └──────────┴───────┬───────┴──────►【END】
+    │          │ verifier_route_edge│ 不符且还有预算 → 退回 router（唯一的环）
+    │          │      ┌──────────┴───────────┐
+    │          │      ▼                      ▼
+    │          │┌──────────────┐      ↺ 退回 router 重判
+    │          ││generate_     │
+    │          ││answer ⑨      │ 受控生成
+    │          ││引用+拒答+流式│
+    │          │└──────┬───────┘
+    │          │ error_route_edge
+    └──────────┴───────┴──────►【END】
                        ▼
                 ┌─────────────┐
-                │human_fallback│ ⑧ 人工兜底（阻断幻觉）
+                │human_fallback│ ⑩ 人工兜底（阻断幻觉）
                 └──────┬──────┘
                        └────────────►【END】
 ```
 
-**三条条件边**：`scene_route_edge`（路由五路）、`tool_route_edge`（工具四去向）、
-`error_route_edge`（生成出口）。直答出口（`smalltalk` / `out_of_scope`）走的是**普通边**
-直达 `END`，不经过任何条件函数 —— 把它们算进「条件分支」会让节点数与边数同时对不上
-（实际是 **9 节点 / 3 条件边**；流式端点用的前置子图少一个 `generate_answer`，是 8 节点）。
+**四条条件边**：`scene_route_edge`（路由五路）、`tool_route_edge`（工具四去向）、
+`verifier_route_edge`（校验两去向：退回重判 / 受控生成）、`error_route_edge`（生成出口）。
+直答出口（`smalltalk` / `out_of_scope`）走的是**普通边**直达 `END`，不经过任何条件函数 ——
+把它们算进「条件分支」会让节点数与边数同时对不上
+（实际是 **10 节点 / 4 条件边**；流式端点用的前置子图少一个 `generate_answer`，是 9 节点）。
 
-**三个「看似可省但不能省」的位置约定（改动前必读）**：
+**四个「看似可省但不能省」的位置约定（改动前必读）**：
 
 1. **降级决策必须落在「边」上，不能藏进节点**——`tool_node` 只负责写
    `tool_degraded=True`，改道哪个分支由 `tool_route_edge` 决定。
@@ -179,6 +194,12 @@
    把「你好」答成「我不知道」）。它们的答案由**模板/常量**直接给出。
 3. **边界判定只写在路由 Agent 一处**——子 Agent 不重复写越界逻辑。
    改一处即全局生效，也才能用一条测试钉住「它只有一份」。
+4. **证据校验必须在生成之前，且必须与生成分开**——`verifier` 只判断
+   「取回的证据真的回答了问题吗」，不写答案。理由是双向的：让 `generate_answer`
+   自己边写边判，判错时要么白生成一段、要么得丢弃已写好的答案（把可恢复的错误
+   变成不可恢复的），而且这个节点会同时不可测；反过来，校验一旦放到生成之后，
+   它就没有"拦截"这个动作可做了。同一条分工也要求 `reroute_count` 只在
+   `verifier_node` 里 +1，`verifier_route_edge` **只读不写**。
 
 ---
 
@@ -190,10 +211,10 @@
 |---|---|---|
 | `app/__init__.py` | 1 | 包声明 |
 | `app/main.py` | **1-240** | 应用装配：lifespan、中间件、路由注册、全局异常 |
-| `app/config.py` | **1-828** | 全局配置中心（所有环境变量集中于此） |
+| `app/config.py` | **1-895** | 全局配置中心（所有环境变量集中于此） |
 | `app/runtime_flags.py` | **1-66** | **零依赖**运行时标志位：provider → config 的**单向**事实通道（见 §4.1 末尾） |
 
-### 3.2 `app/api/` — HTTP 接口层（1537 行）
+### 3.2 `app/api/` — HTTP 接口层（1544 行）
 
 | 文件 | 行号范围 | 路由前缀 | 职责 |
 |---|---|---|---|
@@ -201,7 +222,7 @@
 | `knowledge.py` | **1-182** | `/knowledge` | 知识库上传 / 删除 / 搜索 / 重建索引 |
 | `dify.py` | **1-379** | `/retrieval`、`/dify` | 把自己接成 Dify 的"外部知识库" |
 | `memory.py` | **1-134** | `/memory` | 记忆读写运维（灵魂、事实、画像、蒸馏） |
-| `workflow.py` | **1-152** | `/workflow` | 工作流状态查询与手动触发（拓扑声明在此，加载时与编译图做断言） |
+| `workflow.py` | **1-159** | `/workflow` | 工作流状态查询与手动触发（拓扑声明在此，加载时与编译图做断言） |
 | `evaluation.py` | **1-81** | `/evaluate` | 检索评测、报告、改进建议、反馈统计 |
 | `test.py` | **1-33** | `/test` | 自测：全量 9 项 / 快速 3 项 / 健康检查 |
 | `routing.py` | **1-110** | `/routing` | **混合路由预演**：`POST /routing/intent-preview`（判给谁 + 逐层证据 + 耗时）与 `GET /routing/catalog`（意图目录快照）。只读、无副作用、不进任何子 Agent |
@@ -215,16 +236,16 @@
 > 把"这句话会被判成哪条路、凭什么"逐条摊开。**生产只采信它的前两层**
 > （锚定 + 词面，零成本零模型），判不了的交回模型——**先能看清，再敢切换**。
 
-### 3.3 `app/graph/` — LangGraph 编排层（1050 行）
+### 3.3 `app/graph/` — LangGraph 编排层（1412 行）
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
-| `state.py` | **1-169** | 全局状态 `GraphState` + 初始态工厂（`scene` 与 `intent_type` 的分工见模块 docstring） |
-| `nodes.py` | **1-573** | 9 个节点的实现（含五个 Agent） |
-| `edges.py` | **1-95** | 条件边（路由五路 / 工具四去向 / 生成出口） |
-| `workflow_graph.py` | **1-212** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
+| `state.py` | **1-217** | 全局状态 `GraphState` + 初始态工厂（`scene` 与 `intent_type` 的分工见模块 docstring） |
+| `nodes.py` | **1-733** | 10 个节点的实现（含五个 Agent + 证据校验） |
+| `edges.py` | **1-179** | 条件边（路由五路 / 工具四去向 / 校验两去向 / 生成出口） |
+| `workflow_graph.py` | **1-282** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（5741 行）
+### 3.4 `app/core/` — 调度与基础能力（6603 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -243,13 +264,14 @@
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
-| `router_agent.py` | **1-427** | **路由 Agent**：入口场景判定 + 边界管控。**Phase 0 起它同时是"门面"**——场景常量与越界话术改由 `routing/catalog.py` 定义、此处 re-export，既有 import 点一个不动，但"唯一定义处"已经转移 |
+| `router_agent.py` | **1-488** | **路由 Agent**：入口场景判定 + 边界管控。**Phase 0 起它同时是"门面"**——场景常量与越界话术改由 `routing/catalog.py` 定义、此处 re-export，既有 import 点一个不动，但"唯一定义处"已经转移 |
 | `routing/`（包） | **1-1809** | **混合意图路由（四层漏斗）**：目录 → 句式信号 → 锚点 → 融合打分 → 门控 → 仲裁 → 编排。当前只被 `/routing/intent-preview` 调用 |
-| `sub_agents.py` | **1-338** | **闲聊 / 简单 RAG / 复杂 RAG** 三个子 Agent（统一产出 `AgentAnswer`） |
-| `tool_agent.py` | **1-694** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
+| `sub_agents.py` | **1-399** | **闲聊 / 简单 RAG / 复杂 RAG** 三个子 Agent（统一产出 `AgentAnswer`） |
+| `verifier.py` | **1-485** | **证据校验**：生成之前只判断「取回的证据真的回答了问题吗」。三层降级（未启用 / 无证据 / 离线）全部指向"对齐"，**永不抛异常** |
+| `tool_agent.py` | **1-883** | **工具 Agent**：function calling 循环、参数抽取、护栏、缺失追问、链式调用 |
 | `request_ctx.py` | **1-213** | 请求级共享：query 向量 / 来源白名单 / 本轮证据（授权与证据不由模型回传） |
 | `self_check.py` | **1-347** | 启动自检与健康检查（9 项） |
-| `prompts.py` | **1-240** | 提示词集中注册表 |
+| `prompts.py` | **1-306** | 提示词集中注册表 |
 | `tracing.py` | **1-172** | 全链路 span 树 + trace_id 贯穿 |
 | `observability.py` | **1-39** | LangSmith 追踪接入 |
 | `rag_engine.py` | **1-109** | RAG 五层的兼容门面 |
@@ -361,7 +383,7 @@
 `AUTH_EXEMPT_PATHS` 里的 Dify 接口有自己的 Key 校验，所以两条鉴权链**不能互相替代**。
 CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"本地能跑、上线跨域全挂"，代码里已自动关闭凭据。
 
-#### 📍 `app/config.py`（1-828）
+#### 📍 `app/config.py`（1-895）
 
 配置分区（按行号）：
 
@@ -370,34 +392,36 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 | 1-59 | 模块 docstring、依赖导入与解析辅助（`_env` 16-24 / `_env_bool` 27-47 / `_env_list` 50-57） |
 | 60-67 | 项目路径 |
 | 68-116 | 大模型配置（OpenAI 兼容协议；含思考开关、超时与输出上限） |
-| 117-144 | **Agent（function calling）配置** —— 工具决策最多几轮 `TOOL_AGENT_MAX_STEPS` 143 |
-| 145-159 | **复杂 RAG Agent 配置** —— 子问题上限 `COMPLEX_RAG_MAX_SUBQUERIES` 151 与合并片段上限 `COMPLEX_RAG_MAX_DOCS` 157 |
-| 160-282 | **混合意图路由（四层漏斗）** —— `ROUTE_BUDGET_MS` 197（**总耗时硬上界**）、`ROUTE_LEXICAL_FLOOR` 227 / `ROUTE_LEXICAL_MARGIN` 239、`effective_route_semantic_floor` 269-273 / `effective_route_semantic_margin` 276-280 |
-| 283-294 | **业务结构化数据库（SQLite，只读）** —— `SQLITE_DB_PATH` 292（员工 / 假期余额两张表，供 3 个只读工具查询） |
-| 295-310 | Embedding 配置（含查询侧指令前缀 `EMBEDDING_QUERY_PREFIX` 305） |
-| 311-366 | 向量数据库配置（`VECTOR_DB_CHOICES` 315、`VECTOR_DB_TYPE` 320、`MILVUS_URI` 332、`effective_vector_collection` 342-349、`validate_vector_db_type` 352-364） |
-| 367-375 | Redis 配置 |
-| 376-409 | 对话与检索参数（`effective_score_threshold` 394-401、`effective_fallback_min` 404-408） |
-| 410-434 | 融合权重与阈值 |
-| 435-441 | 词面倒排索引配置（BM25） |
-| 442-460 | Rerank 精排 |
-| 461-489 | 增量索引的对账策略（`DOCSTORE_STRATEGY_CHOICES` 468 / `DOCSTORE_STRATEGY` 471） |
-| 490-510 | 可观测性接入（LangSmith 445-455 + **trace 脱敏** 457-465） |
-| 511-516 | Embedding 缓存配置 |
-| 517-521 | 入站限流配置 |
-| 522-553 | 记忆系统配置（短期记忆 + 长期记忆） |
-| 554-560 | 切片策略（基础：分片大小 + 重叠） |
-| 561-640 | 切片策略（配置化 + 策略可替换） |
-| 641-661 | PDF 图片抽取 |
-| 662-699 | Dify 兼容接口 |
-| 700-721 | 入站鉴权（fail-closed） |
-| 722-752 | 来源访问控制 ACL（`_parse_source_acl` 735-748） |
-| 753-828 | 服务配置 + `mask_secret` 761-767 + `dump_config` 770-828 |
+| 117-157 | **Agent（function calling）配置** —— 工具决策最多几轮 `TOOL_AGENT_MAX_STEPS` 144 |
+| 158-172 | **复杂 RAG Agent 配置** —— 子问题上限 `COMPLEX_RAG_MAX_SUBQUERIES` 164 与合并片段上限 `COMPLEX_RAG_MAX_DOCS` 170 |
+| 173-214 | **证据校验（Verifier）与「退回重路由」** —— `VERIFIER_MODE_CHOICES` 196 / `VERIFIER_MODE` 199（`off` / `auto` / `always`，**按需触发**：只在有理由怀疑证据不对时才动手）、`ROUTE_RETRY_BUDGET` 193（**回边的唯一刹车**，0 = 只校验不改道）、`VERIFIER_TIMEOUT_MS` 213（超时按「对齐」放行） |
+| 215-226 | **闲聊 Agent 的轻量模型兜底（默认关）** —— `SMALLTALK_LLM_ENABLED` 224（只放行问候 / 致谢 / 道别三类） |
+| 227-349 | **混合意图路由（四层漏斗）** —— `ROUTE_BUDGET_MS` 264（**总耗时硬上界**）、`ROUTE_LEXICAL_FLOOR` 294 / `ROUTE_LEXICAL_MARGIN` 306、`effective_route_semantic_floor` 336-340 / `effective_route_semantic_margin` 343-347 |
+| 350-361 | **业务结构化数据库（SQLite，只读）** —— `SQLITE_DB_PATH` 359（员工 / 假期余额两张表，供 3 个只读工具查询） |
+| 362-377 | Embedding 配置（含查询侧指令前缀 `EMBEDDING_QUERY_PREFIX` 372） |
+| 378-433 | 向量数据库配置（`VECTOR_DB_CHOICES` 382、`VECTOR_DB_TYPE` 387、`MILVUS_URI` 399、`effective_vector_collection` 409-416、`validate_vector_db_type` 419-431） |
+| 434-442 | Redis 配置 |
+| 443-476 | 对话与检索参数（`effective_score_threshold` 461-468、`effective_fallback_min` 471-475） |
+| 477-501 | 融合权重与阈值（`RRF_K` 485、`DENSE_WEIGHT` 486 / `LEXICAL_WEIGHT` 487、`REFUSE_THRESHOLD` 495） |
+| 502-508 | 词面倒排索引配置（BM25） |
+| 509-527 | Rerank 精排 |
+| 528-556 | 增量索引的对账策略（`DOCSTORE_STRATEGY_CHOICES` 535 / `DOCSTORE_STRATEGY` 538） |
+| 557-577 | 可观测性接入（LangSmith：`LANGSMITH_ENABLED` 563 / `LANGSMITH_ENDPOINT` 567；**trace 脱敏**：`TRACE_MASK_ENABLED` 572 / `TRACE_MASK_MAX_CHARS` 576） |
+| 578-583 | Embedding 缓存配置 |
+| 584-588 | 入站限流配置 |
+| 589-620 | 记忆系统配置（短期记忆 + 长期记忆） |
+| 621-627 | 切片策略（基础：分片大小 + 重叠） |
+| 628-707 | 切片策略（配置化 + 策略可替换） |
+| 708-728 | PDF 图片抽取 |
+| 729-766 | Dify 兼容接口 |
+| 767-788 | 入站鉴权（fail-closed） |
+| 789-819 | 来源访问控制 ACL（`_parse_source_acl` 802-815） |
+| 820-895 | 服务配置 + `mask_secret` 828-834 + `dump_config` 837-895 |
 > ⚠️ **这张表是"整表错位"的高危区。**它以前只被校验器保护了一半，现在两半都保护了。
 >
-> **符号数字**（`TOOL_AGENT_MAX_STEPS` 143 这类）：校验器第 11 类逐条比对 AST。
+> **符号数字**（`TOOL_AGENT_MAX_STEPS` 144 这类）：校验器第 11 类逐条比对 AST。
 >
-> **24 个分区区间 + 表首那行前置段**：校验器第 13 类逐行对齐源码的 `# ====` 横幅，
+> **27 个分区区间 + 表首那行前置段**：校验器第 13 类逐行对齐源码的 `# ====` 横幅，
 > 口径就是下面这两句——**起 = 横幅首行，止 = 下一横幅首行 − 1**（末段止 = 文件末行）。
 > 所以**改 `app/config.py` 后不必再手工复核这张表**，写错会红。
 >
@@ -426,7 +450,7 @@ CORS 如果配了 `*` 又要带凭据，浏览器会直接拒绝——典型的"
 - `_env_bool`：统一认定 `0/false/no/off` 是假，避免每个模块各写一套判断。
 - `_env_list`：逗号切分并丢弃空项。
 
-`effective_score_threshold`（`config.py:394-401`）是个有意思的设计：
+`effective_score_threshold`（`config.py:461-468`）是个有意思的设计：
 检索阈值**按 embedding 模式自适应**。为什么？因为不同向量模型的分数尺度天差地别——
 OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 如果套一个固定阈值，换个模型检索就全空了。
@@ -439,8 +463,8 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 `SCORE_THRESHOLD` 用 `Optional`，`None` 有「未配置」的语义，**不能用 0 代替**——
 留空表示"按 embedding 模式自动选"，写 0 则表示"任何分数都不够"，两者天差地别。
 历史坑：有一批融合权重只在消费方用 `getattr(config, X, 默认值)` 读取，config 里根本没定义，
-导致改 `.env` 完全无效——现已在 config 里补齐为真实配置（`RRF_K:418` / `DENSE_WEIGHT:419` /
-`LEXICAL_WEIGHT:420` 这一组就是），并把消费方从 `getattr` 兜底改成**运行时读取**。
+导致改 `.env` 完全无效——现已在 config 里补齐为真实配置（`RRF_K:485` / `DENSE_WEIGHT:486` /
+`LEXICAL_WEIGHT:487` 这一组就是），并把消费方从 `getattr` 兜底改成**运行时读取**。
 
 ---
 
@@ -493,7 +517,7 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 | `knowledge.py` | 上传 `79-145`、删除 `149-152`、搜索 `156-166`、重建 `170-182` | 上传两道闸：先看 `Content-Length` 预检，再分块累加（`_read_limited:31-50`），**不能先全量读进内存再判大小**；`_REBUILD_LOCK:19` 保证重建索引串行。上传的正文解析走 `doc_loader.load_file`——**与重建路径同一个入口**（P0-3） |
 | `dify.py` | 检索 `210-261`、OpenAPI `283-358` | 见下方"score 归一化"说明 |
 | `memory.py` | soul 写入 `44-79` | `AUTH_ENABLED=false` 时直接 403——"一次改掉全站人格"的能力不该存在于无防护服务上 |
-| `workflow.py` | 拓扑校验 `59-80`、执行 `100-152` | `_validate_topology` 在模块加载时比对声明拓扑与真实图，防止前端面板与真实执行路径漂移 |
+| `workflow.py` | 拓扑校验 `66-87`、执行 `107-159` | `_validate_topology` 在模块加载时比对声明拓扑与真实图，防止前端面板与真实执行路径漂移 |
 | `routing.py` | 阈值快照 `54-72`、预演 `76-93`、目录 `97-110` | **纯预演、零副作用**：不写 `request_ctx`、不调子 Agent、不写库。旧的统计 / 标定端点已随自造路由删除，`match_intent` 上也没有 `record` 参数了 |
 | `evaluation.py` | 评测 `19-47`、报告 `51-57` | 会真实调用 embedding——**每次评测都是一次真实的远端向量化**，按需控制用例数 |
 | `test.py` | 全量 `13-17`、快速 `21-24` | `/test/all` 会真实调 LLM，**不要挂到探针轮询上** |
@@ -511,18 +535,28 @@ Dify 的 `score_threshold` 是 **0~1 的绝对相关度**语义，
 
 ### 4.3 编排层 `app/graph/`
 
-#### 📍 `app/graph/state.py`（1-169）
+#### 📍 `app/graph/state.py`（1-217）
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `GraphState` | 50-126 | 用 `TypedDict` 声明一次提问的全部字段 |
-| `create_initial_state` | 129-169 | 初始态工厂 |
+| `GraphState` | 50-169 | 用 `TypedDict` 声明一次提问的全部字段 |
+| `create_initial_state` | 172-217 | 初始态工厂 |
 
-字段分五组：**输入**（user_query / session_id / user_id）、**记忆**（chat_history / memory_context）、
-**路由**（intent_type / intent_capability / intent_source / model_tier / route_decision）、
+字段分七组：**输入**（user_query / session_id / user_id）、**记忆**（chat_history / memory_context）、
+**路由**（intent_type / intent_capability / intent_source / model_tier / route_gray_reason / route_decision）、
 **证据**（retrieve_docs / tool_result）、
+**校验**（evidence_aligned / verify_reason / verify_source / reroute_count）、
 **产出**（answer / citations / confidence / refused / finish_reason / truncated）、
 **观测**（error_msg / need_human / soft_warnings / trace）。
+
+其中 `evidence_aligned` 是**三态**（`None` / `True` / `False`），**不能压成布尔**：
+
+- `None` = 没做过校验（未启用 / 没有证据可校验 / 走的是直答出口）；
+- `True` = 校验过，判定对齐；
+- `False` = 校验过，判定**不符**——它是**唯一**会让 `verifier_route_edge` 改道的取值。
+
+所以边上写的是 `is False` 而不是 `is not True`：后者会把"这个问题不适用"
+也算成"判错了"，让闲聊与越界出口凭空多绕一圈。
 
 **实现原理（小白版）**：
 LangGraph 的状态就是一个**在节点之间传递的大字典**。
@@ -531,7 +565,7 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 
 **⚠️ 关键陷阱**：`GraphState` 是 `TypedDict`，
 **没在这里声明的键会被 LangGraph 当作非法通道静默丢弃**。
-所以新增可观测字段必须**同时**改 `GraphState`（50-126）和 `create_initial_state`（129-169），
+所以新增可观测字段必须**同时**改 `GraphState`（50-169）和 `create_initial_state`（172-217），
 否则 API 层永远读到 `None`，而且不报错——比报错更难查。
 
 **为什么异常要分两条通道**：
@@ -539,23 +573,24 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 `soft_warnings` 只做观测（记录但不影响流程）。
 混在一起会导致"检索抖一下就把用户推给人工"。
 
-#### 📍 `app/graph/nodes.py`（1-573）—— 9 个节点
+#### 📍 `app/graph/nodes.py`（1-733）—— 10 个节点
 
 | 节点 | 行号 | 职责 | 编码原则 |
 |---|---|---|---|
-| `memory_load_node` | 98-125 | 加载长期记忆与多轮历史，拼 `memory_context` | 独立成节点以便观测 IO 耗时；**永不失败** |
-| `router_node` | 131-179 | 调**路由 Agent** 判场景，写 `scene` / `scene_reason` / `scene_source` | 唯一入口；越界在此拦下 |
-| `smalltalk_node` | 185-209 | 闲聊模板直出 | 不进检索、不进生成、不调模型 |
-| `out_of_scope_node` | 215-236 | 越界常量话术 | 答案来自常量，不经模型生成 |
-| `simple_rag_node` | 259-274 | 简单 RAG：单次混合检索 | 检索失败只记 `soft_warnings`，不转人工 |
-| `complex_rag_node` | 277-295 | 复杂 RAG：拆解 → 多检索 → 合并去重 | 原问题始终参与检索（拆歪了是静默错误） |
-| `tool_node` | 347-474 | **工具 Agent**：function calling 循环 | 只写 `tool_degraded`；改道交给 `tool_route_edge` |
-| `generate_answer_node` | 506-551 | 受控生成 + 挂 span 属性 | 把 ttft / 截断信息写进 state 和 span |
-| `human_fallback_node` | 557-573 | 人工兜底话术 | 不回显异常原文；trace 的 detail 也不放诊断串（只写「已转人工兜底」） |
-| `_apply_retrieval` | 242-256 | 三路检索共用的「取证据」步骤 | 抽出来避免三个 Agent 各写一遍 |
-| `_collect_degradations` | 301-328 | 汇总本轮降级为可读字符串 | 降级必须留痕，否则"答得差"无从归因 |
-| `_failed_business_tools` | 331-344 | 挑出"业务工具执行失败" | 与"参数不合 schema"区分开：后者是模型侧问题，不转人工 |
-| `build_generation_inputs` | 480-503 | 为 L4 准备检索输入 | 两条链路共用，禁止各拼一份 |
+| `memory_load_node` | 118-145 | 加载长期记忆与多轮历史，拼 `memory_context` | 独立成节点以便观测 IO 耗时；**永不失败** |
+| `router_node` | 151-220 | 调**路由 Agent** 判场景，写 `scene` / `scene_reason` / `scene_source` / `route_gray_reason` | 唯一入口；越界在此拦下。`route_gray_reason` 是"漏斗为什么没判"，证据校验的触发判据读它 |
+| `smalltalk_node` | 226-250 | 闲聊模板直出 | 不进检索、不进生成、不调模型（可选的轻量改写见 §4.4 的 `sub_agents.py`） |
+| `out_of_scope_node` | 256-277 | 越界常量话术 | 答案来自常量，不经模型生成 |
+| `simple_rag_node` | 300-315 | 简单 RAG：单次混合检索 | 检索失败只记 `soft_warnings`，不转人工 |
+| `complex_rag_node` | 318-336 | 复杂 RAG：拆解 → 多检索 → 合并去重 | 原问题始终参与检索（拆歪了是静默错误） |
+| `tool_node` | 388-519 | **工具 Agent**：function calling 循环 | 只写 `tool_degraded`；改道交给 `tool_route_edge` |
+| `verifier_node` | 532-634 | **证据校验**：写 `evidence_aligned` / `verify_reason` / `verify_source` | 判定不符时**只在这里**把 `reroute_count` +1；改道交给 `verifier_route_edge` |
+| `generate_answer_node` | 666-711 | 受控生成 + 挂 span 属性 | 把 ttft / 截断信息写进 state 和 span |
+| `human_fallback_node` | 717-733 | 人工兜底话术 | 不回显异常原文；trace 的 detail 也不放诊断串（只写「已转人工兜底」） |
+| `_apply_retrieval` | 283-297 | 三路检索共用的「取证据」步骤 | 抽出来避免三个 Agent 各写一遍 |
+| `_collect_degradations` | 342-369 | 汇总本轮降级为可读字符串 | 降级必须留痕，否则"答得差"无从归因 |
+| `_failed_business_tools` | 372-385 | 挑出"业务工具执行失败" | 与"参数不合 schema"区分开：后者是模型侧问题，不转人工 |
+| `build_generation_inputs` | 640-663 | 为 L4 准备检索输入 | 两条链路共用，禁止各拼一份 |
 
 **设计取舍：失败处置的统一判据是「能不能从其他来源得到答案」**
 
@@ -565,29 +600,39 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 | 业务工具**执行**失败 | 不能 | 转人工兜底 |
 | 参数不合 schema / 护栏拒绝 | —— | 归 `rejected`（模型侧问题），**不转人工**，让模型自我纠正或向用户追问 |
 
-#### 📍 `app/graph/edges.py`（1-95）与 `workflow_graph.py`（1-212）
+#### 📍 `app/graph/edges.py`（1-179）与 `workflow_graph.py`（1-282）
 
 **条件边就是普通函数**：读 state，返回一个字符串，LangGraph 拿这个字符串去映射表里找下一个节点。
 
 | 条件边 | 行号 | 去向 |
 |---|---|---|
-| `scene_route_edge` | 22-35 | 五个场景各一路（互斥）；未知场景名兜底到 `simple_rag` |
-| `tool_route_edge` | 38-61 | 四路：人工兜底 / END（反问用户）/ `simple_rag`（不支持 FC 改道）/ `generate_answer` |
-| `error_route_edge` | 64-95 | 生成之后：人工兜底 / END |
+| `scene_route_edge` | 29-42 | 五个场景各一路（互斥）；未知场景名兜底到 `simple_rag` |
+| `tool_route_edge` | 45-111 | 四路：人工兜底 / END（反问用户）/ `simple_rag`（不支持 FC 改道）/ `verifier`（有证据） |
+| `verifier_route_edge` | 114-145 | 两路：`router`（判定不符且还有预算 → **退回重判**）/ `generate_answer` |
+| `error_route_edge` | 148-179 | 生成之后：人工兜底 / END |
 
 **降级决策落在「边」上，而不是「节点」里**：`tool_node` 只写 `tool_degraded=True`，
 改道哪个分支由 `tool_route_edge` 决定。理由不是洁癖——
 拓扑必须完整地留在拓扑里，读图的人才能看见"改道"这件事每天都在发生。
+同一条分工也要求 `reroute_count` **只在 `verifier_node` 里 +1**，
+`verifier_route_edge` 只读不写：把计数也交给边去改，预算就成了一个藏在判据里的副作用。
 
-**两个编译产物共用同一个装配函数**：`_wire(graph, generation_target=...)`（93-157）认的是
-「证据出口通向哪」这一个差异，于是 `build_workflow_graph`（160-169，9 节点）与
-`build_pre_generation_graph`（172-183，8 节点）不可能漂移。流式链路**不可能**重抄业务逻辑。
+**图里唯一的环为什么必要且安全**：`verifier → router` 是整张图唯一的回边。
+**必要**来自"下游才有发现误判所需的证据"——路由判错的那一刻，只有拿到证据的下游
+才看得出来；**安全**来自两条：判据只看事实（`evidence_aligned is False`）、
+有上界（`REROUTE_COUNT <= ROUTE_RETRY_BUDGET`，默认 1）。
+没有上界的环就是死循环，`ROUTE_RETRY_BUDGET=0` 则退化成"只校验、不改道"。
 
-**拓扑计数不许写死**：`conditional_branch_count()`（76-90）从**编译图**按「出发节点」
+**两个编译产物共用同一个装配函数**：`_wire(graph, generation_target=...)`（140-224）认的是
+「证据就绪之后通向哪」这一个差异，于是 `build_workflow_graph`（221-230，10 节点）与
+`build_pre_generation_graph`（233-245，9 节点）不可能漂移。流式链路**不可能**重抄业务逻辑。
+
+**拓扑计数不许写死**：`conditional_branch_count()`（122-137）从**编译图**按「出发节点」
 去重数条件分支点。注意不能直接数边——LangGraph 会把一条条件边按目标展开成多条
-（`router` 那一条展开成 5 条），边长 5+4+2=11，而分支点只有 3 个。启动日志用的就是它。
+（`router` 那一条展开成 5 条），边长 5+4+2+2=13，而分支点只有 4 个（含 `generate_answer`
+那条）。启动日志用的就是它。
 
-**⚠️ 注意**：`get_mermaid()`（192-212）返回的是**手写的常量字符串**，不是从编译图自动导出的。
+**⚠️ 注意**：`get_mermaid()`（260-282）返回的是**手写的常量字符串**，不是从编译图自动导出的。
 拓扑改了如果忘了同步这里，前端展示的流程图就会和真实执行路径不一致。
 `app/api/workflow.py` 的 `NODE_LABELS` 会在模块加载时拿它与编译图的节点集合做断言，
 漂移会在启动日志里告警——但那只覆盖节点集合，覆盖不到连线。
@@ -596,18 +641,18 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 
 ### 4.4 调度层 `app/core/`
 
-#### 📍 `app/core/router_agent.py`（1-427）—— 路由 Agent（入口 + 边界管控 + 常量门面）
+#### 📍 `app/core/router_agent.py`（1-488）—— 路由 Agent（入口 + 边界管控 + 常量门面）
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `RouteDecision` | 143-172 | 判定结果：场景 + 理由 + 来源 + 越界话术 |
-| `SOURCE_LOCAL` | 180 | **本地快通道**的 `source` 取值（`router:local`） |
-| `_local_route` | 197-241 | **本地快通道**：零模型判定，命中即返回，判不了返回 `None` |
-| `route_query` | 244-319 | 主入口：本地快通道 → 组装提示词 → 调模型 → 解析 |
-| `_parse_route` | 329-356 | 从模型输出里抠出场景名，不在闭集内即拒绝 |
-| `_ROUTER_HISTORY_TURNS` | 364 | 喂给路由模型的历史轮数（**刻意少于**生成层的 `SHORT_TERM_WINDOW`） |
-| `_format_history` | 367-389 | 取最近几轮 → 交给 `app.memory.short_term` 裁剪与格式化 |
-| `_fallback_route` | 395-427 | 模型不可用时的**确定性规则兜底** |
+| `RouteDecision` | 143-184 | 判定结果：场景 + 理由 + 来源 + 越界话术 + `gray_reason`（漏斗**为什么**没判） |
+| `SOURCE_LOCAL` | 192 | **本地快通道**的 `source` 取值（`router:local`） |
+| `_local_route` | 209-267 | **本地快通道**：零模型判定，返回 `(判定, 灰区原因)`；判定为 `None` 时**灰区原因照样带回**（下游靠它区分「摇摆」与「只是没命中例句」） |
+| `route_query` | 270-378 | 主入口：本地快通道 → 组装提示词 → 调模型 → 解析。`feedback` 非空即**二次判定**（见下） |
+| `_parse_route` | 388-415 | 从模型输出里抠出场景名，不在闭集内即拒绝 |
+| `_ROUTER_HISTORY_TURNS` | 423 | 喂给路由模型的历史轮数（**刻意少于**生成层的 `SHORT_TERM_WINDOW`） |
+| `_format_history` | 426-448 | 取最近几轮 → 交给 `app.memory.short_term` 裁剪与格式化 |
+| `_fallback_route` | 454-488 | 模型不可用时的**确定性规则兜底** |
 
 **`_format_history` 为什么自己不写一份**：路由看历史**只为一件事**——消解代词
 （「他的邮箱是多少」里的"他"）。它该做的是"少取几轮"，而不是"另写一套拼行逻辑"。
@@ -625,6 +670,12 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 两个前置条件缺一不可：调用方**未注入 `model`**（注入的语义是"这次交给它判"，
 测试靠它隔离外部依赖，快通道抢答会把被测行为**掩蔽**掉），且处于**真实模型模式**
 （离线走 Mock + 确定性兜底，那是一条刻意设计的降级路径，不该顺手改其行为）。
+
+**二次判定（`feedback` 非空）与首次判定的两点差别**：
+① **不走本地快通道**——`_local_route` 采信的正是"这条路看起来像什么"，
+而它上一轮已经这么判过一次了，再采信一次等于原地打转，白绕一圈还多花一次调用；
+② **把上一轮的结论与被退回的原因写进提示词**（`router_retry` 模板），
+并明确写上一句"为了换一个结论而换结论，只会让用户多等一轮"。
 
 **Phase 0 起它多了一个身份：常量门面。** 通道闭集与越界话术
 （`SCENE_*` / `SCENES` / `DEFAULT_SCENE` / `OUT_OF_SCOPE_ANSWER`）
@@ -803,37 +854,155 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 把三者混成一个 `confidence` 数字是最容易做的事，也是最没用的：
 它无法回答"这次到底是慢、是坏、还是本来就难"。
 
-#### 📍 `app/core/sub_agents.py`（1-338）—— 闲聊 / 简单 RAG / 复杂 RAG
+#### 📍 `app/core/sub_agents.py`（1-399）—— 闲聊 / 简单 RAG / 复杂 RAG
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
-| `AgentAnswer` | 63-89 | 三个子 Agent 的**统一产出形状**（text / docs / sub_queries / steps / degraded…） |
-| `run_smalltalk_agent` | 143-152 | 闲聊：模板直出，**不调模型** |
-| `run_simple_rag_agent` | 158-187 | 简单 RAG：恰好一次检索 |
-| `decompose_query` | 193-227 | 复杂 RAG：把问题拆成多个子查询（调一次模型） |
-| `run_complex_rag_agent` | 254-326 | 复杂 RAG：多次检索 → 合并去重 |
+| `AgentAnswer` | 75-101 | 三个子 Agent 的**统一产出形状**（text / docs / sub_queries / steps / degraded…） |
+| `run_smalltalk_agent` | 194-213 | 闲聊：模板直出，**不调模型** |
+| `run_simple_rag_agent` | 219-248 | 简单 RAG：恰好一次检索 |
+| `decompose_query` | 254-288 | 复杂 RAG：把问题拆成多个子查询（调一次模型） |
+| `run_complex_rag_agent` | 315-387 | 复杂 RAG：多次检索 → 合并去重 |
 
 **为什么三个 Agent 共用一个 `AgentAnswer`**：它们的下游都是同一个 L4 与同一个观测面板。
 形状统一之后，新增一个 Agent 不需要改生成层、不需要改前端契约。
 
-**为什么闲聊必须"不调模型"**：Mock 模型对寒暄会返回「未在知识库中检索到…」这种
-荒唐结果——离线环境一致性就这么没了。而识别与回复同源（同一批正则）则保证了
-"认得出就一定答得上"，零延迟、零成本、零幻觉。
+**为什么闲聊必须"不调模型"（以及那个可选的开关）**：Mock 模型对寒暄会返回
+「未在知识库中检索到…」这种荒唐结果——离线环境一致性就这么没了。而识别与回复同源
+（同一批正则）则保证了"认得出就一定答得上"，零延迟、零成本、零幻觉。
+
+代价是文档一度也承认的：**措辞固定**，不会因人因时变化。所以留了一个**默认关**的开关
+`SMALLTALK_LLM_ENABLED`。打开后也只放行三类：
+
+| 模板 | 走模型？ | 理由 |
+|---|---|---|
+| `greeting` / `thanks` / `bye` | ✅（开关开启时） | 纯客套，**不含任何业务事实可编**，写歪了也只是措辞 |
+| `identity`（"你是谁"的能力清单） | ❌ **永不走模型** | 那张清单是**对模型的约束**，写死的才不会被发挥出不存在的能力 |
+| `default`（兜底话术） | ❌ **永不走模型** | 它是"我不确定你在说什么"，交给模型改写等于让它自由发挥 |
+
+三条兜底把风险压住：调用**异常**、返回**空**、或**超过 60 字**一律回落模板；
+模板类别用 `frozenset` 白名单（`_SMALLTALK_LLM_TEMPLATES`），而不是"排除法"——
+新增一类寒暄时默认**不**走模型，要开得单独加进去。
+对应的护栏也不看 `steps[0]["kind"]`（那在真的误调模型时也会通过），而是**看模型有没有
+被调用过**：假模型会吐一个可识别的句子，出现即判失败。
 
 **复杂 RAG 的两条硬约束**：① **原问题必须参与检索**——拆解模型漏掉主语的例子很多，
 只搜子问题会漏掉最相关的那一篇；② 合并去重取**较高** fused 分，不是先到先得。
 
-#### 📍 `app/core/tool_agent.py`（1-694）—— 工具 Agent
+#### 📍 `app/core/verifier.py`（1-485）—— 证据校验 Agent
+
+| 组件 | 行号 | 说明 |
+|---|---|---|
+| `SOURCE_MODEL` / `SOURCE_SKIPPED` / `SOURCE_DEGRADED` | 171-171 | 三种来源：模型判定 / **没做校验**（按需跳过、已关闭或无证据）/ 降级放行 |
+| `MISMATCH_TOKEN` | 176 | 判定词常量（`MISMATCH`），提示词与解析共用一份 |
+| `TriggerDecision` | 200-210 | **这一轮要不要校验**的结论、原因与理由 |
+| `VerifyResult` | 214-236 | 结论：`aligned`（**三态**，跳过写 `None`）/ `reason` / `source` / `degraded` / `trigger` |
+| `_evidence_text` | 239-267 | 把检索片段与工具结果拼成证据文本（**业务结果在前**） |
+| `_has_soft_fallback` | 270-277 | 证据里有没有"检索硬凑"的软回退片段 |
+| `_verifier_mode` | 280-292 | 触发方式归一化；未知取值降级到默认值并告警 |
+| `should_verify` | 295-366 | **按需触发判据**——「要不要校验」的唯一产生点（零 IO、纯函数） |
+| `_parse_verdict` | 369-385 | 只认第一个非空行的判定词，认不出返回 `None` |
+| `verify_evidence` | 396-485 | 唯一入口：先问 `should_verify`，不需要就直接跳过（**一次调用都不发**） |
+
+**它只回答一个问题**："取回的证据，真的能回答用户这个问题吗。"
+不生成、不改证据、不碰路由——`verifier_node` 只把结论写进 state，
+"退回还是继续"由 `verifier_route_edge` 决定。
+
+**为什么它必须独立成节点，而不是塞进 `generate_answer`**：
+工具 Agent 完全可能返回**结构正确、字段齐全、但语义不对**的数据（查错了人），
+而 `generate_answer` 的置信度来自检索分数，看不出这种错。但把它并进生成节点会同时
+失去两样东西：判错时要么白生成一段、要么得丢弃已写好的答案（把可恢复的错误变成
+不可恢复的），而且这个节点会**同时不可测**——你没法单独喂它一份错证据看它怎么反应。
+**裁判必须发生在生成之前**，这是它独立成节点的全部理由。
+
+**它是修复手段，不是常规工序。** 首版的设计是"每个证据链路都校验一次"，上线后
+实测：20 次采样 **0 次**判出 `MISMATCH`，却稳定占掉首 token 路径上 1.2~3.0 秒。
+所以改成按需触发 —— 判据全部取自前置阶段**已经算出来**的结构性事实，判定本身
+不发起任何调用（省的是"动手"那一步，不是"判断"那一步）：
+
+| 触发原因（`TRIGGER_*` 闭集） | 判据 | 为什么它值得查 |
+|---|---|---|
+| `degraded` | `soft_warnings` 非空 | 检索失败 / 路由降级 / 工具降级都会进这里，链路自己已经报了"质量已下降"。**工具链路的全部可疑迹象都由这一条覆盖**：调用被护栏拒绝、执行抛异常、正文回捞，三者都写进 `soft_warnings` |
+| `weak_evidence` | 任一片段 `fallback` 为真 | 软回退的含义就是「Top1 分数不达标、硬凑了几条回来」 |
+| `tight_route` | `route_gray_reason == tight_margin` | 漏斗在通道之间咬得很紧 → **这次判定本身就不稳**。注意不能用 `scene_source != router:local` 当判据：实测那会把 85% 的正常提问拉来复核，而其中真摇摆的是 0 条（详见下） |
+| `always` | `VERIFIER_MODE=always` | 回退路径：`auto` 万一漏判，改一个值就能切回"每轮都查" |
+| `disabled` / `not_needed` | `off` / 没命中上面任何一条 | **两者必须分开**：前者是"机制不存在"，后者是"查了、没有可疑迹象" |
+
+**「走了工具链路」为什么不算一条判据**（它曾经写作 `if tool_result:`）：措辞上讲的是风险
+（"业务数据没有第二道防线"），读起来完全合理，但两个依据把它否掉了 ——
+
+- **代价固定、收益为零**：4 条真实工具链路里 `verifier_node` 中位 **1551ms**，占整轮请求
+  **17%~25%**；而全部历史判定中 `aligned` 只出现过 `True` 与"没跑"两种取值，`False`
+  **一次都没有**，`verifier_route_edge` 的回边同样从未触发。
+- **判据本身是代理信号**：与下面那条 `scene_source` 同类。"走了工具链路"和"证据可疑"之间
+  没有因果关系 —— 工具结果是我们自己 SQLite 里的一行结构化记录，不存在让检索偏掉的机制
+  （片段被切碎、Top1 分数不达标、多路融合选错），它**结构上不可能**"硬凑"。
+
+**失去的覆盖面只有一种，如实记下**：「工具调用成功，但工具本身选错了」（用户问部门，
+模型查了年假；参数合法、字段齐全，只有语义比对能看出来）。它没有本地信号，语义比对是唯一
+手段。从今往后这一类不再被兜住；需要恢复全覆盖用 `VERIFIER_MODE=always`。
+
+**最后一条判据为什么读「漏斗**为什么**没判」，而不是「谁拍的板」**
+（`route_gray_reason`，取自 `app/core/routing/gating.py` 的灰区原因）：
+
+| 灰区原因 | 含义 | 该不该复核 |
+|---|---|---|
+| `tight_margin` | 顶两名咬得很紧 → **这次判定本身就不稳** | **该** |
+| `low_floor` | 词面分低于地板 —— 只是这句话与例句不像 | 不该：模型路由读的是能力描述，本来就是给这类句子准备的 |
+| `no_candidate` | 一个候选都没有，同上 | 不该 |
+| `budget_exceeded` | 预算耗尽，属降级 | 不该（已由 `soft_warnings` 那条兜住） |
+
+这一条曾经写作 `scene_source != router:local`（"路由不是本地快通道拍的板"），
+看着合理，实测是个**哑信号**：漏斗的地板 + 边际双门槛很紧，27 条正常提问里只有
+**4 条**被本地采信，于是这条判据把 **23 条（85%）** 都拉回来复核 —— 而那 23 条里
+"在通道之间摇摆"的是 **0 条**，全是 `low_floor`。也就是说，按需触发实际退化成了
+每轮都跑，正是它要摆脱的那笔固定成本。换成 `tight_margin` 之后，同一批提问的
+触发数从 23 降到 **0**。
+
+`gray_reason` 这条信息因此必须从漏斗一路带到 `GraphState`：`_local_route` 判不了时
+把灰区原因带回 → `route_query` 的**每条**返回路径都带上它 → `router_node` 写进
+`route_gray_reason` → `verifier_node` 读它。中间任何一处漏传，下游就只剩"漏斗没判"
+这个无差别的大桶，只能一律按可疑处理 —— 而**漏传的表现是"什么都不触发"**，与
+"这一轮确实没问题"完全同形：静默、不报错，指标还更好看。
+
+出发点是「让模型自己决定要不要校验」。**这条路走不通，而且是循环论证**：
+`generate_answer` 拿着错误证据写出流畅答案，**正是因为它看不出**证据与问题不匹配
+（问员工甲的年假、证据是员工乙的，字段齐全、句式对口）。把"该不该校验"交给它，
+等于让考生自己判断自己有没有答错题——判得出来的那些，本来就不会答错。
+生成之前它还没读到证据；生成之中判就等于既生成又裁判（见上一节）；生成之后
+这一轮的 prefill 已经付过了。所以判据靠的**不是模型的自省，而是链路上留下的痕迹**。
+
+**跳过时如实记「没做校验」，不记「对齐」**：`align` 为 `None`、`trace` 写
+「未做校验」、且**不进 `soft_warnings`**（跳过是本轮的正常结论，不是降级）。
+写 `True` 会让"我们没查"与"查过、没问题"在观测上完全同形——前端面板会把一个
+大面积跳过的链路显示成"全部对齐"，而实际上这件事本轮没人管。同理，节点里
+`'对齐' if aligned else '不符'` 这种写法会把 `None` 说成"证据不符"，比不写更糟。
+
+**降级策略一律是 fail-open（判不准就放行）**，因为两个方向的代价不对称：
+
+| 情形 | 行为 | 为什么不反过来 |
+|---|---|---|
+| 按需判据说不需要（`auto` 下的常态） | 跳过，`source=verifier:skipped`，`aligned=None` | 大部分检索是对的；逐轮复核一个多数时候正确的结论要付 1~3 秒**固定**成本 |
+| 校验已关闭（`VERIFIER_MODE=off`） | 跳过，`source=verifier:skipped` | 与"查了、没问题"必须可分，否则没人会发现它其实是关的 |
+| 没有证据可校验 | 跳过，`source=verifier:skipped` | 没证据时校验无从下手——开成 `always` 也变不出证据来 |
+| 离线模式（Mock） | 记 `degraded`，按"对齐"放行 | 离线要求的是**行为可复现**，不是多一次判定 |
+| 调用异常 / 超时 / 输出不可解析 | 记 `degraded`，按"对齐"放行 | 判错放行的代价 = 没有这个 Agent；判错拦截 = 白跑一轮 + 退回重判，最坏永远答不出 |
+
+**提示词只吐一个判定词，不吐 JSON**：本项目已经有两份 JSON 提取实现
+（`router_agent._parse_route` 与 `memory/dream.py`）。再多一份就又多一个会各自漂移的
+解析器——收益却只是"多一个字段"，而那个字段（理由）用一行纯文本就够了。
+
+#### 📍 `app/core/tool_agent.py`（1-883）—— 工具 Agent
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
 | `AGENT_TOOLS` | 115 | 工具清单（从 `app/tools/sqlite_tools.py` 来） |
 | `GROUNDED_ARGS` | 121-127 | 哪些参数必须能在**用户原话**里找到出处 |
 | `parse_text_tool_calls` | 218-251 | 从**正文**里回捞被写成文本的工具调用 |
-| `ToolDecision` | 276-330 | 决策结果（含 `direct_answer` / `steps` / `used_tools`） |
-| `execute_tool_calls` | 408-492 | 执行调用：schema 校验 → 落地护栏 → 记 step |
-| `run_tool_agent` | 498-566 | 主循环：取证据 → 交回决策（最多 `TOOL_AGENT_MAX_STEPS` 轮） |
-| `_decide` | 569-694 | 每轮的判断：继续调工具 / 直答 / 收口 |
+| `ToolDecision` | 384-445 | 决策结果（含 `direct_answer` / `steps` / `used_tools`） |
+| `execute_tool_calls` | 523-609 | 执行调用：schema 校验 → 落地护栏 → 记 step |
+| `run_tool_agent` | 615-704 | 主循环：取证据 → 交回决策（最多 `TOOL_AGENT_MAX_STEPS` 轮） |
+| `_decide` | 707-883 | 每轮的判断：继续调工具 / 直答 / 收口 |
 
 **⚠️ 直答出口的判据是 `not used_tools`（一次都没**成功**取到证据），不是 `attempted`（提过调用）**
 
@@ -852,8 +1021,21 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 L4 受控生成（引用编号、置信度、拒答判定只在那一层产生）。该轮真正的有效产出只是
 「没有更多工具调用」这条消息，而它已经由 `tool_calls` 为空表达出来了。
 
-代价是实打实的：真实埋点里这一轮 **2571ms**，占工具阶段（5096ms）的一半，
-而 54 条真实链路里有 **46 条**正是这个形状（单次工具调用 → 收口）。
+代价是实打实的：真实埋点里这一轮 **2571ms**，占工具阶段（5096ms）的一半。
+
+> ⚠️ **2026-09-24 更正形状统计。** 此前这里写的是「54 条真实链路里有 **46 条**正是这个
+> 形状（单次工具调用 → 收口）」。把埋点里**全部**含 `agent_step_*` 的真实链路重新过
+> 一遍，14 条里只有 **4 条**是这个形状；另外 **10 条**的第 2 轮发的是**真正的第二跳**
+> （`steps=2`，即"姓名→工号"之后按工号取字段），且第 1 轮**全部**只发 1 个调用、
+> **全部**是 `find_employee_by_name`（工具设计的必然：另外两个工具都只收 `employee_id`）。
+>
+> 两种形状的耗时也不一样：`steps=1`（1 跳 + 收口）的 tool 阶段中位 **6417ms**，
+> `steps=2`（2 跳）中位 **3915ms** —— 收口那一轮因为要生成一段注定被丢弃的正文，
+> 反而比只发调用的那一轮更贵。
+>
+> **所以"两轮"不是冗余，而是链式调用的结构性下限**：第二跳的参数来自第一跳的结果，
+> 模型必须先看见它，这一轮往返省不掉。**注意这句话只对链式形状（10/14）成立**——
+> 收口形状那 4 条的第 2 轮是可以省掉的，见下方「计划词」。
 
 被丢弃的正文长度记进 `agent_step_N` span 的 `discarded_chars`。**这个埋点值得单独说一句**：
 它存在的意义就是让"这条 wasted 还剩多少"从猜测变成可核对，而它第一次核对就推翻了一个假设。
@@ -869,9 +1051,52 @@ L4 受控生成（引用编号、置信度、拒答判定只在那一层产生�
 > 52 字按实测吐字速度（≈94 字/s）只值约 **0.5s**，剩下约 **3.6s 是这一轮的模型往返本身**。
 > 也就是说，"让模型别写"即使**完全生效**，也只省下 0.5s，且**省不掉这一轮**。
 >
-> 所以：**别再往提示词里加同义句**。真正的浪费是「这一轮该不该发生」——
-> 单次工具调用链路里，第 2 轮的职责只有"确认没有更多调用"，而链式链路要靠它再决策一次，
-> 前者占了 46/54。要省这笔钱得让**代码**判断证据是否已经齐备，不能指望模型自觉。
+> 所以：**别再往提示词里加同义句**。链式链路的第 2 轮往返省不掉（依赖第一跳的结果，见上），
+> 能省的只有"结果里已经有答案、还要再查一遍"那种**多余的第三跳**——它靠让模型
+> **先核对"手上的结果够不够"**来省（提示词第 2 条），不是靠让它少写字。
+
+**计划词：用模型自己声明的计划省掉收口那一轮**（2026-09-24）
+
+链式形状的第 2 轮省不掉，但**收口形状**（4/14）的第 2 轮本来就不必发生——它唯一的
+产出是「没有更多调用」，而模型在第 1 轮就能知道自己够不够。做法是让模型在发出工具
+调用的那一轮、正文里**只写一个词**声明打算：
+
+| 计划词 | 含义 | 本地行为 |
+|---|---|---|
+| `PLAN_DONE` | 这次调用拿到结果后就能回答用户 | 数据干净则**省掉后面那轮决策** |
+| `PLAN_MORE` | 只是中间一步，还要看结果才知道下一步 | 照旧走下一轮 |
+
+真实模型 7 条问句 × 2 次实测：计划词 **100% 命中且两次完全一致**，分类也判得准——
+「E1001 的年假还剩几天」「张三的部门是什么」判 `PLAN_DONE`（一次够，`find` 的返回里
+本来就含部门）；「张三的年假还剩几天」「李四是什么时候入职的」判 `PLAN_MORE`（要先解析工号）。
+
+**为什么不在本地算"够不够"**：从工具结果反推"够不够回答用户问的那件事"需要语义比对，
+本地写出来必定是又一份与模型抢活的规则。反过来让模型**声明意图**才成立——它当然知道
+自己打算查一步还是两步，**这个判断不需要看到结果**。（这与"让模型判断自己的证据对不对"
+是两件事：后者是循环论证，见 verifier 那节；前者是声明意图。）
+
+**四道守卫同时满足才省**（都在 `_decide` 末尾）：
+
+1. 开关 `TOOL_AGENT_PLAN_SHORTCUT` 打开（默认开，关掉即回到旧行为）；
+2. 模型确实声明了 `PLAN_DONE`（**认不出来按没声明处理**，默认保守）；
+3. **后面确实还有一轮可省**——最后一轮本来就要退出，谈不上省；
+4. 本轮每个调用都取到了**可用数据**（`usable`：`ok=true` 且非重名歧义）。
+
+第 4 道是安全底线，也是实测里**唯一救回判断偏差**的那一道：真实模型对
+「王五的部门是什么」也吐了 `PLAN_DONE`，但工具返回的是两位王五（`ambiguous=true`），
+此时该做的是追问是哪一位——所以不能省，必须让模型看到候选人。
+
+⚠️ `usable`（能不能拿去回答）与 `status == "ok"`（工具跑通没跑通）是**两个判据，不能合并**：
+查无此人（`{"ok": false, "error": "not_found"}`）与重名（给的是候选人列表）都会记成 `ok`，
+却都不是能直接作答的数据。但**出口判据仍然用 `status`**——`used_tools` 若改用 `usable`，
+查无此人时就会落进直答出口，模型可能把 `not_found` 说成「该员工年假为 0 天」。
+
+省错的代价要说清楚：模型若"自认为一次够、实际不够"，用户拿到的是 L4 的"资料不足"，
+**是诚实拒答而不是错答**；退路也是现成的（把开关关掉即可）。
+
+> ⚠️ 顺带证伪了一条更激进的方案：让模型一轮发出整条链、第二跳参数写占位符
+> `{{0.employee_id}}`。实测模型**根本不写占位符**，而且那段说明会干扰计划词判断
+> （把"入职时间"这类需要两跳的问句误判成 `PLAN_DONE`）。不做。
 
 **服务端没有登录态，工号只能来自用户原话或工具返回值**：`employee_id` 出现在
 schema 里（模型要填），但它**不是**授权事实——没有身份可对账。护栏因而落在
@@ -982,7 +1207,7 @@ LangChain 的 `Runnable.invoke` 会执行 `contextvars.copy_context()`，再在�
 | 文件 | 关键行号 | 要点 |
 |---|---|---|
 | `rag_engine.py` | 入口 `37-50` / `61-77` | RAG 五层的兼容门面，外部只认这一个入口；**历史裁剪只在这层做**，避免两处裁剪导致配置静默失效 |
-| `prompts.py` | `PROMPTS` 24-221 / `render` 231-240 | 提示词集中注册；缺变量抛异常而不是填空串（空串会让模型收到残缺指令却不报错） |
+| `prompts.py` | `PROMPTS` 24-287 / `render` 297-306 | 提示词集中注册；缺变量抛异常而不是填空串（空串会让模型收到残缺指令却不报错） |
 | `self_check.py` | `FAST_ITEMS` 18 / `run_self_check` 235-330 | 分层自检：快速项只探本地基础设施，深度项会真调 LLM 默认跳过 |
 | `rate_limit.py` | `RateLimiter` 29-48 | 每 IP 一个 `deque` 存命中时间戳，滑动窗口 60s，默认 20 次/分钟 |
 | `request_ctx.py` | `get/set_query_vector` 139-146 | 用 `contextvars` 存 `(query文本, 向量)`，读时校验文本一致才算命中 |
@@ -1342,7 +1567,7 @@ RRF **只看排名，完全不看分数绝对值**——所以对量纲免疫、
 还有 `section_hit_rate`：用期望章节名去匹配片段的 `heading_path`，
 衡量是否落在**正确的章节**，而不是碰巧命中了关键词。
 
-**忠实度 `score_faithfulness` 怎么算**（233-246）：
+**忠实度 `score_faithfulness` 怎么算**（235-248）：
 把答案切成相邻两字一组（bigram），看有多少组在参考内容里出现过。
 
 **⚠️ 重要陷阱**：它是**精确率**——分母是**答案**的 bigram 数，不是参考内容的。
@@ -1883,7 +2108,7 @@ query 上限 2000 字、文档 5 万字；
 
 `logger.py`：`TraceIdFilter`（14-28）在 filter 里读一次 trace_id 注入日志记录，
 由格式串统一渲染，各模块不用自己拼前缀。
-`preview()`（67-79）把用户 query 截断到 40 字再入日志，避免明文隐私泄露——
+`preview()`（62-74）把用户 query 截断到 40 字再入日志，避免明文隐私泄露——
 **所有记录用户原始输入的日志点都应该经过它**。
 
 ---
@@ -2109,17 +2334,17 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **610 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **683 passed** |
 | └ 分层依赖契约（P1-2） | `pytest tests/test_layering.py -q` | 通过（下层不得 import 上层）；契约定义在 `pyproject.toml` 的 `[tool.importlinter]` |
 | └ 零依赖标志位（P1-6） | 同上（第二条 forbidden 契约） | 通过（`app/runtime_flags.py` 不许 import 任何 `app.*`） |
 | └ 增量索引对账（P1-5） | `pytest tests/test_incremental_index.py -q` | 通过（连跑两次条数不变 / 删源后片段全消失） |
 | └ 死代码扫描（**门禁口径**） | `pytest tests/test_deadcode.py -q` | 通过（6 项发现 = 豁免清单 6 项） |
-| └ **文档行号校验** | `pytest tests/test_doc_linenos.py -q` | 通过（**654 条声明全一致** + 校验器自身 **24 项**回归） |
+| └ **文档行号校验** | `pytest tests/test_doc_linenos.py -q` | 通过（**712 条声明全一致** + 校验器自身 **30 项**回归） |
 | 静态检查 | `ruff check app/ scripts/ tests/` | All checks passed |
-| 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 5 项；**脚本按发现数返回退出码 1**，故不纳入门禁 |
-| 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 15 项存量，**非门禁** |
+| 死代码扫描（人工巡检） | `python scripts/deadcode_scan.py` | 6 项（1 未引用模块 + 5 未使用函数 / 方法）；**脚本按发现数返回退出码 1**，故不纳入门禁 |
+| 死代码扫描（严格口径） | `python scripts/deadcode_scan.py --strict` | 17 项存量（1 + 12 + 1 未使用类 + 2 未使用常量 + 1 死配置），**非门禁** |
 
-**行号校验为什么从命令行搬进 pytest**：它守着上面那 628 条声明，却是唯一一条
+**行号校验为什么从命令行搬进 pytest**：它守着上面那 712 条声明，却是唯一一条
 「忘了跑就真的没跑」的命令 —— 其余各项都挂在 `pytest` 上。搬进来之后，
 门禁从四条命令收敛成两条。命令行入口仍然保留（约 0.5 秒，只想看行号时更快）：
 
@@ -2151,7 +2376,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `scripts/chunk_metrics.py` | 171 | 切分质量指标 |
 | `scripts/baseline_snapshot.py` | 133 | 冻结基线快照 |
 | `scripts/eval_generation.py` | 91 | 生成侧离线评测 |
-| `scripts/verify_doc_linenos.py` | 857 | **校验本文行号是否因代码改动而失效（十四类声明）** |
+| `scripts/verify_doc_linenos.py` | 924 | **校验本文行号是否因代码改动而失效（十五类声明）** |
 | `scripts/check_vector_db.py` | 307 | **向量库连接自检：配置解析 + 连通性 + 读写往返（探针走临时集合，不碰生产数据）** |
 | `scripts/verify_milvus_lite.py` | 123 | **在真实 Milvus 引擎（Lite，免 Docker）上验证向量库适配器** |
 | `scripts/module_inventory.py` | 83 | 模块清单 |
@@ -2163,7 +2388,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（16851 行）**
+**应用代码 `app/`（18149 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -2171,26 +2396,26 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `api/chat.py` | 465 | `api/dify.py` | 379 |
 | `api/evaluation.py` | 81 | `api/knowledge.py` | 182 |
 | `api/memory.py` | 134 | `api/routing.py` | 110 |
-| `api/test.py` | 33 | `api/workflow.py` | 152 |
-| `config.py` | 828 | `core/__init__.py` | 1 |
+| `api/test.py` | 33 | `api/workflow.py` | 159 |
+| `config.py` | 895 | `core/__init__.py` | 1 |
 | `core/errors.py` | 72 | `core/llm_factory.py` | 23 |
-| `core/observability.py` | 39 | `core/prompts.py` | 240 |
+| `core/observability.py` | 39 | `core/prompts.py` | 306 |
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 64 |
-| `core/request_ctx.py` | 213 | `core/router_agent.py` | 427 |
+| `core/request_ctx.py` | 213 | `core/router_agent.py` | 488 |
 | `core/routing/__init__.py` | 96 | `core/routing/anchors.py` | 282 |
 | `core/routing/arbitration.py` | 178 | `core/routing/catalog.py` | 455 |
 | `core/routing/derive.py` | 143 | `core/routing/fusion.py` | 443 |
 | `core/routing/gating.py` | 115 | `core/routing/router.py` | 380 |
 | `core/routing/signals.py` | 327 | `core/routing/similarity.py` | 138 |
 | `core/routing/vocabulary.py` | 114 | `core/self_check.py` | 347 |
-| `core/source_acl.py` | 48 | `core/sub_agents.py` | 338 |
-| `core/tool_agent.py` | 694 | `core/tracing.py` | 172 |
-| `core/trace_mask.py` | 231 | | |
+| `core/source_acl.py` | 48 | `core/sub_agents.py` | 399 |
+| `core/tool_agent.py` | 883 | `core/tracing.py` | 172 |
+| `core/trace_mask.py` | 231 | `core/verifier.py` | 485 |
 | `db/__init__.py` | 1 | `db/enterprise_db.py` | 170 |
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
-| `graph/__init__.py` | 1 | `graph/edges.py` | 95 |
-| `graph/nodes.py` | 573 | `graph/state.py` | 169 |
-| `graph/workflow_graph.py` | 212 | `main.py` | 240 |
+| `graph/__init__.py` | 1 | `graph/edges.py` | 179 |
+| `graph/nodes.py` | 733 | `graph/state.py` | 217 |
+| `graph/workflow_graph.py` | 282 | `main.py` | 240 |
 | `memory/__init__.py` | 185 | `memory/chat_history.py` | 70 |
 | `memory/consolidator.py` | 154 | `memory/dream.py` | 148 |
 | `memory/long_term.py` | 178 | `memory/short_term.py` | 179 |
@@ -2212,25 +2437,25 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `tests/test_biz_correctness.py` | 769 | `tests/test_chunk_keys.py` | 207 |
 | `tests/test_chunking_baseline.py` | 158 | `tests/test_config_contract.py` | 204 |
 | `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 449 |
-| `tests/test_doc_linenos.py` | 364 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
+| `tests/test_doc_linenos.py` | 473 | `tests/test_error_boundary.py` | 369 | `tests/test_eval_section.py` | 74 |
 | `tests/test_fixes_assessment.py` | 252 | `tests/test_infra.py` | 224 |
 | `tests/test_layering.py` | 257 | `tests/test_memory_pipeline.py` | 197 |
-| `tests/test_meta_align.py` | 132 | `tests/test_multi_agent.py` | 953 |
+| `tests/test_meta_align.py` | 132 | `tests/test_multi_agent.py` | 1442 |
 | `tests/test_parent_chunk.py` | 112 | `tests/test_pdf_image.py` | 97 |
 | `tests/test_rag.py` | 204 | `tests/test_routing_funnel.py` | 1413 |
 | `tests/test_self_check.py` | 60 | `tests/test_service.py` | 263 |
 | `tests/test_short_term_symmetry.py` | 284 | `tests/test_soft_warnings.py` | 253 |
 | `tests/test_soul_write.py` | 124 | `tests/test_span_tree_smoke.py` | 264 |
 | `tests/test_sqlite_tools.py` | 258 | `tests/test_structure.py` | 203 |
-| `tests/test_structure_chunking.py` | 178 | `tests/test_tool_agent.py` | 720 |
+| `tests/test_structure_chunking.py` | 178 | `tests/test_tool_agent.py` | 1153 |
 | `tests/test_trace_mask.py` | 504 | `tests/test_upload_rebuild_alignment.py` | 209 |
 | `tests/test_vector_store_backends.py` | 381 | | |
 | `scripts/baseline_snapshot.py` | 133 | `scripts/check_vector_db.py` | 307 |
 | `scripts/chunk_metrics.py` | 171 | `scripts/chunking_ab.py` | 326 |
 | `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
-| `scripts/fix_doc_linenos.py` | 200 | `scripts/module_inventory.py` | 83 |
+| `scripts/fix_doc_linenos.py` | 362 | `scripts/module_inventory.py` | 83 |
 | `scripts/probe_routing.py` | 214 | `scripts/refgraph_scan.py` | 607 |
-| `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 857 |
+| `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 924 |
 | `scripts/verify_milvus_lite.py` | 123 | | |
 
 ### 附录 B：数据与配置
@@ -2250,34 +2475,46 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 python scripts/verify_doc_linenos.py
 ```
 
-它对本文的 **654 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
-覆盖十四类写法：
+它对本文的 **712 条行号声明**逐条回验（AST 静态解析，不 import、无副作用），
+覆盖十五类写法：
 
 | # | 声明类型 | 例子 |
 |---|---|---|
-| 1 | 符号行号（含类方法 / 嵌套函数 / 模块级常量） | `retrieve` 251-493 |
-| 2 | 文件总行数（区间式） | `app/main.py` **1-231** |
-| 3 | 文件总行数（附录裸数字式） | `config.py` 744 |
+| 1 | 符号行号（含类方法 / 嵌套函数 / 模块级常量） | `retrieve` 250-495 |
+| 2 | 文件总行数（区间式） | `app/main.py` **1-240** |
+| 3 | 文件总行数（附录裸数字式） | `config.py` 879 |
 | 4 | 章节 / 全量小计（散文式） | `### 3.2 app/api/ — HTTP 接口层（1,492 行）` |
-| 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-744）` |
-| 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 231-240 |
+| 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-879）` |
+| 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 283-292 |
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:131-150` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（894 行）、`app/config.py`（828 行） |
-| 9 | 区域行号表（裸区间） | `287-342` 向量数据库配置 |
-| 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:244-319` |
-| 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `CHANNELS` \| 70 \| 、（`_decide` 565-690） |
-| 12 | **区间式引用**（符号 + 括号 / 裸文件名 + 冒号 / 表格行首文件名 + 描述里匿名区间） | `state.py`：`GraphState`（50-126）、`config.py:394-401` |
-| 13 | **config 分区表**（真值来自源码 `# ====` 横幅，**不在 AST 里**） | `47-54` 项目路径、`678-744` 服务配置 |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（948 行）、`app/config.py`（895 行） |
+| 9 | 区域行号表（裸区间） | `362-417` 向量数据库配置 |
+| 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:270-378` |
+| 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `SCENES` \| 63-69 \| 、（`_decide` 569-694） |
+| 12 | **区间式引用**（符号 + 括号 / 裸文件名 + 冒号 / 表格行首文件名 + 描述里匿名区间） | `state.py`：`GraphState`（50-169）、`config.py:461-468` |
+| 13 | **config 分区表**（真值来自源码 `# ====` 横幅，**不在 AST 里**） | `60-67` 项目路径、`804-879` 服务配置 |
 | 14 | **文档点名的符号必须真实存在**（**唯一不看数字的一类**） | `error_route_edge`、`tool_node` |
+| 15 | **函数级区间**（反引号里带参数 / 名字后带空括号 / 名字与括号之间夹了文字） | `_wire(graph, generation_target=...)`（140-224）、`get_mermaid()`（260-282） |
 
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。
 
-**本文当前状态：654 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
+**本文当前状态：712 条声明全部与源码一致**（`scripts/verify_doc_linenos.py` 退出码 0）。
 多 Agent 重构删掉了一批模块，本文对应章节已按新架构重写——这类「文件没了」的失效
-是校验器唯一无法自动修的，必须人工重写，也正是它最该报出来的。
+无法自动修，只能人工重写，也正是它最该报出来的。
 
-> **为什么有十四类而不是三类？** 因为最初只覆盖了第 1～2 类，于是
+**修复器的覆盖面（2026-09-24 补齐）**：`scripts/fix_doc_linenos.py` 原先只解析得出
+"报文里已经给了正确值"的那几种形状；第 12、15 类的报文**只说哪里不对**，于是上一轮
+重构一次就积下 14 处只能手工回填的数字。现在它从源码 AST 取真值（与校验器共用
+同一个 `collect_symbols`），并借报文里带的**符号名**消解同一行上的数字撞车——
+`ROUTE_RETRY_BUDGET` 与 `VERIFIER_MODE_CHOICES` 的行号曾写成同一个数，而只有后者需要改；
+锚点匹配要求两侧不是标识符字符，否则 `DOCSTORE_STRATEGY` 会先命中
+`DOCSTORE_STRATEGY_CHOICES` 里那一段，把两个数字**换错位**（实测踩过，被校验器当场逮住）。
+**仍有一类必须人工**：匿名区间所指的对象无法由那一行唯一确定时（例如"举例说明某种
+写法"的那种引用，行内没有属于该文件的任何符号名），脚本按 fail-closed 跳过并逐条列出
+——宁可让人看一眼，也不能把行号写到别的函数头上。
+
+> **为什么有十五类而不是三类？** 因为最初只覆盖了第 1～2 类，于是
 > 附录整块（第 3 类）、章节小计（第 4 类）、模块标题（第 5 类）、
 > 区域表（第 9 类）全都**静默通过**。校验器只认它「认得出」的写法，
 > 认不出的写法不会报错、只会被跳过——所以「全部一致」这个结论，
@@ -2305,7 +2542,7 @@ python scripts/verify_doc_linenos.py
 > **第 12 类把这条教训又推进了一步**：同一批「没人校验」的写法，
 > 常常是被**同一个前提**一次性漏掉的。第 11 类修的是「符号与数字之间
 > **没有**括号」这一种邻接方式，于是同族的另几种邻接——**带**括号
-> （如 `state.py`：`GraphState`（50-126））、带冒号（如 `config.py:394-401`）、
+> （如 `state.py`：`GraphState`（50-169））、带冒号（如 `config.py:461-468`）、
 > 以及表格里的「行首文件名 + 描述中匿名区间」——就一并漏在外面。
 > 补上后声明数 558 → 594，抓出 5 处错值，其中 `GraphState` 那一处
 > **整整偏了 40 行**，却既不越界、也不报错——是第 10 类那种
@@ -2323,11 +2560,22 @@ python scripts/verify_doc_linenos.py
 >
 > **第 14 类换的是「守什么」，不是「怎么守」**：前 13 类**全部是关于数字的**，
 > 它守的却是**名字**。这不是又补了一种写法，而是承认了一件事——
-> **「行号全对」与「话是对的」是两件事**。600 条声明全绿的同时，
+> **「行号全对」与「话是对的」是两件事**。712 条声明全绿的同时，
 > 文档里可以写着一个代码里根本没有的函数名；读者照着去搜，搜不到，
 > 最后怀疑的是自己。这类错误**行号校验永远抓不到**，因为它压根没有数字。
 > 教训：**门禁守什么，取决于你以为它在守什么；而最危险的误解，
 > 是以为它在守「文档是对的」。**
+>
+> **第 15 类是被第 12 类那条教训回头打脸的**：第 12 类上线时写下「四种写法
+> 一次清干净」，但它只认 `` `名字`（A-B）`` 这一种形状——反引号里带参数、
+> 名字后面带一对空括号、名字与括号之间夹着说明文字，这三种同样是「函数级区间」
+> 的写法，于是**又安静地活了很久**。实测（2026-09-24）：一次代码改动让这一类
+> 数字一次漂了 5 处（另有 2 处更早就错），而校验器连报三轮「全部一致」。
+> 它顺带还修了第 12 类的一个判据漏洞：区间超出「继承来的那个文件」的行数时，
+> 第 12 类按「越界 = 不是行号」跳过，而**文件本身可能就认错了**（一节小标题
+> 点名两个文件时，上下文只继承到第一个）。第 15 类因此改成按**符号自己的
+> 定义处**定位。教训：**「清干净」要以形状为单位枚举，不能以「类」为单位
+> 宣布完成**——宣布之后，同族的另一种形状就会住进去。
 
 如果只是想重新生成一份结构骨架（用于新增模块时查行号）：
 

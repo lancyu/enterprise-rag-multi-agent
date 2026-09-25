@@ -30,6 +30,7 @@ NODE_LABELS = {
     "simple_rag": "简单 RAG Agent（单次检索）",
     "complex_rag": "复杂 RAG Agent（拆解·多次检索）",
     "tool": "工具 Agent（function calling）",
+    "verifier": "证据校验（按需触发）",
     "generate_answer": "受控生成",
     "human_fallback": "人工兜底",
 }
@@ -40,13 +41,19 @@ BRANCHES = [
         "from": "router",
         "type": "conditional",
         "routes": ["smalltalk", "out_of_scope", "simple_rag", "complex_rag", "tool"],
-        "note": "五个场景各自独立；越界在入口拦下，不进任何子 Agent",
+        "note": "五个场景各自独立；越界在入口拦下，不进任何子 Agent。二次判定（被退回时）也走这里",
     },
     {
         "from": "tool",
         "type": "conditional",
-        "routes": ["human_fallback", "END", "simple_rag", "generate_answer"],
-        "note": "决策失败→人工兜底；反问用户→结束；不支持 function calling→改道简单 RAG；有证据→受控生成",
+        "routes": ["human_fallback", "END", "simple_rag", "verifier"],
+        "note": "决策失败→人工兜底；反问用户→结束；不支持 function calling→改道简单 RAG；取回证据→证据校验（按需触发，出过状况才复核）",
+    },
+    {
+        "from": "verifier",
+        "type": "conditional",
+        "routes": ["generate_answer", "router"],
+        "note": "证据与问题不符且未超重试预算→退回路由重判（图里唯一回边）；其余→受控生成。由 simple_rag / complex_rag / tool 三个证据出口进入",
     },
     {
         "from": "generate_answer",

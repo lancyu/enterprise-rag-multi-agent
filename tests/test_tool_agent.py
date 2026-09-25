@@ -26,16 +26,21 @@ from __future__ import annotations
 import contextvars
 
 import pytest
+from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 
+from app import config
 from app.core import request_ctx
 from app.core.tool_agent import (
     AGENT_TOOLS,
     GROUNDED_ARGS,
+    PLAN_DONE,
+    PLAN_MORE,
     execute_tool_calls,
     parse_text_tool_calls,
     run_tool_agent,
 )
+from app.core.tool_agent import _parse_plan, _payload_is_usable, _strip_plan_token
 from tests.fakes import RecordingModel
 
 
@@ -209,6 +214,434 @@ def test_agent_prompt_tells_the_model_not_to_write_the_discarded_answer():
 
     assert "不要再写回答" in SYSTEM_PROMPT
     assert "会被直接丢弃" in SYSTEM_PROMPT
+
+
+def test_agent_prompt_asks_for_sufficiency_before_calling_again():
+    """提示词必须要求模型**每一轮先核对"手上的结果够不够"**，够了就不再调用工具。
+
+    这条修的是一个真缺陷，而不是加一句泛泛的"要聪明一点"。改动前提示词第 2 条写的是
+
+        用户问「张三的部门」，可以先用 find_employee_by_name 拿到工号，
+        再用 query_employee_info 查详情。
+
+    而 ``find_employee_by_name`` 的返回**本来就含部门**（见 ``tools/sqlite_tools.py``
+    的 ``_ok({"ambiguous": ..., "candidates": rows})``，rows 就是工号/姓名/部门三列）。
+    也就是说：**提示词自己教模型在这一问上多查一次**。文档里"三个工具"的描述与
+    这条示例互相矛盾，模型自然选更稳的那条路——再查一次。
+
+    代价有三层：多打一次库、上下文里多塞一份内容重叠的 JSON（这份 JSON 还要被
+    L4 再 prefill 一遍）、以及把"链式调用"的样例教成了"每问都两跳"。
+
+    ⚠️ 这条**不承诺更快**。实测第 2 轮无论发调用还是收口都要付一次模型往返
+    （收口那轮因为要生成一段被丢弃的正文，中位反而更贵），所以修它买到的是
+    正确性与 token，不是延迟。别拿它当性能优化的证据。
+
+    ⚠️ 反向验证：把第 2 条改回"信息不够就去查"、或把 "张三的部门" 那条示例加回来，
+    本条必须变红。
+    """
+    from app.core.tool_agent import SYSTEM_PROMPT
+
+    assert "够不够回答" in SYSTEM_PROMPT, "缺少「先核对够不够」这条判据"
+    assert "不必" in SYSTEM_PROMPT and "query_employee_info" in SYSTEM_PROMPT
+    # 那条教模型多查一次的示例不能再出现——它和工具自身的返回值矛盾。
+    assert "再用 query_employee_info 查详情" not in SYSTEM_PROMPT
+
+
+def test_agent_prompt_tells_the_model_how_to_attribute_a_dead_end():
+    """查不到时要**分清是哪一种**，不能一律含糊地说"没查到"。
+
+    三种情形对用户的意义完全不同：调用选错了工具或参数（该重试）、问题对了但
+    库里没有（该如实说没有）、这个问题本来就不归工具 Agent 管（制度类，该由
+    检索回答）。把它们混成一句"没查到"，用户无从判断该不该换个说法再问。
+
+    "不要拿别的工具硬凑"这一句是**闸门**：没有它，模型可能在制度类问题上用
+    ``query_employee_info`` 硬凑出一段看起来像答案的话——那正是最坏的一类失败
+    （结构完整、语义答非所问）。
+
+    ⚠️ 反向验证：把第 4 条与"不要拿手边的工具硬凑"删掉，本条必须变红。
+    """
+    from app.core.tool_agent import SYSTEM_PROMPT
+
+    assert "先分清是哪一种" in SYSTEM_PROMPT
+    assert "不要重复同一个无效调用" in SYSTEM_PROMPT
+    assert "三个工具都答不了" in SYSTEM_PROMPT
+    assert "不要拿手边的工具硬凑" in SYSTEM_PROMPT
+
+
+# ===========================================================================
+# 1c. 计划词：用模型自己声明的计划省掉一整轮决策
+#
+# 背景见 `app/core/tool_agent.py` 里 `PLAN_DONE` 那一节。一句话：两轮里有一轮
+# 并不是"链式调用的第二跳"，而只是模型回一句「够了」——而它在那句话里**已经把
+# 答案写出来了**，随后被 L4 覆盖重写。让模型在出发前用一个词声明打算，
+# 声明"够"且本轮数据干净时，后面那轮决策**整个省掉**。
+#
+# 本地不自己算"够不够"：从工具结果反推"够不够回答用户问的那件事"需要语义比对，
+# 写出来必定是又一份与模型抢活的规则。模型知道自己打算查一步还是两步——
+# 这个判断**不需要看到结果**，所以它才成立。
+# ===========================================================================
+class _PlannedModel:
+    """可**携带正文**的假模型：一轮 = ``(正文, 工具调用列表)``。
+
+    为什么不用 ``tests/fakes.py`` 的 ``RecordingModel``：它在"发出工具调用"的那
+    一轮 ``content`` 恒为空串（``_RecordingBinding.invoke`` 里写死），而计划词机制
+    的**全部输入**恰恰是「正文里带一个词、同时发出 ``tool_calls``」这个形状。
+    改 ``RecordingModel`` 会波及所有依赖正文的既有用例——它是共享替身，动它等于
+    同时改掉十几个用例的前提。故在此另起一个**同契约**的最小替身：同样只暴露
+    ``bind_tools`` / ``calls``，同样"脚本耗尽后重复最后一项"。
+
+    这不是替身放宽了约束：真实链路里 ``bound.invoke`` 返回的 ``AIMessage``
+    本来就同时带 ``content`` 与 ``tool_calls``（见 ``content_of`` 的说明），
+    ``RecordingModel`` 只是把它简化掉了。
+    """
+
+    def __init__(self, script: list) -> None:
+        self.script = list(script) if script else [("", [])]
+        self.calls: list = []
+        self.bound_tools = None
+
+    def bind_tools(self, tools):
+        self.bound_tools = list(tools)
+        return _PlannedBinding(self)
+
+
+class _PlannedBinding:
+    def __init__(self, model: _PlannedModel) -> None:
+        self._model = model
+
+    def invoke(self, messages, **_kwargs):
+        model = self._model
+        model.calls.append(list(messages))
+        index = min(len(model.calls) - 1, len(model.script) - 1)
+        content, calls = model.script[index]
+        return AIMessage(
+            content=content,
+            tool_calls=[
+                {
+                    "name": c["name"],
+                    "args": c.get("args") or {},
+                    "id": c.get("id") or f"call_{index}_{i}",
+                    "type": "tool_call",
+                }
+                for i, c in enumerate(calls)
+            ],
+        )
+
+
+def test_plan_done_with_usable_data_skips_the_next_decision_round(business_db):
+    """声明「这次够了」且结果干净 → **第 2 轮整个不发生**。
+
+    收益的唯一可观测形式就是"模型少被调用一次"：省掉的那一轮是一次真实往返
+    （实测 1.8~2.9s），且它写下的正文本来就要被丢弃。所以这里断言 ``model.calls``
+    的**次数**而不是耗时——离线测试里的耗时是假的，调用次数不是。
+
+    ⚠️ 反向验证：去掉 ``_decide`` 末尾那个 ``if`` 里任意一道守卫，本条必须变红
+    （第三道由 ``test_plan_done_on_the_last_round_skips_nothing`` 单独守）。
+    """
+    model = _PlannedModel([
+        ("PLAN_DONE", [{"name": "query_leave_balance", "args": {"employee_id": "E1001"}}]),
+    ])
+
+    decision = run_tool_agent("E1001 的年假还剩几天", model=model)
+
+    assert decision.plan_shortcut is True
+    assert len(model.calls) == 1, "省掉的正是第 2 轮模型往返"
+    assert decision.used_tools == ["query_leave_balance"], "省的是决策轮，不是证据"
+    assert not decision.is_direct, "取到了证据 → 仍走证据出口，成文权在 L4"
+
+
+def test_plan_more_still_consumes_the_next_round(business_db):
+    """声明「还要看结果才知道下一步」→ 照旧走下一轮。
+
+    这条同时是**链式调用的保护**：姓名 → 工号的第二跳必须看见第一跳的结果，
+    计划词机制不能把它省掉。真实模型在「张三的年假还剩几天」「李四是什么时候
+    入职的」上都声明 ``PLAN_MORE``，与链式调用的实际需要一致。
+    """
+    model = _PlannedModel([
+        ("PLAN_MORE", [{"name": "find_employee_by_name", "args": {"name": "张三"}}]),
+        ("", []),
+    ])
+
+    decision = run_tool_agent("张三的年假还剩几天", model=model)
+
+    assert decision.plan_shortcut is False
+    assert len(model.calls) == 2
+    assert decision.steps[0].tool == "find_employee_by_name"
+
+
+def test_plan_done_is_overridden_when_the_tool_returns_ambiguous_candidates(business_db):
+    """声明 ``PLAN_DONE`` 但工具返回的是**候选人列表** → 不信它，照旧走下一轮。
+
+    这是实测里唯一一次判断偏差，也正是第四道守卫存在的理由：真实模型对
+    「王五的部门是什么」也吐了 ``PLAN_DONE``（重名时它自己也拿不准该说哪一位），
+    而工具返回的是两位王五。此时必须让模型看见候选人，才有机会请用户确认
+    （提示词第 3 条：重名时必须确认，不要自己挑一个）。
+
+    ⚠️ 反向验证：把 ``and all(step.usable for step, _ in executed)`` 去掉，本条必须
+    变红——而且它变红的**方式**很具体：模型看不到候选人，用户会拿到一个被替选中
+    的部门，且从回答里看不出选过。
+    """
+    model = _PlannedModel([
+        ("PLAN_DONE", [{"name": "find_employee_by_name", "args": {"name": "王五"}}]),
+        ("", []),
+    ])
+
+    decision = run_tool_agent("王五的部门是什么", model=model)
+
+    assert decision.plan_shortcut is False
+    assert len(model.calls) == 2, "必须让模型看到两位王五"
+    assert decision.steps[0].status == "ok", "工具跑通了"
+    assert decision.steps[0].usable is False, "但拿回来的是候选人列表，不能直接作答"
+
+
+def test_plan_done_is_overridden_when_the_tool_reports_not_found(business_db):
+    """声明 ``PLAN_DONE`` 但查无此人（``ok:false``）→ 不信它。
+
+    与重名那条是同一判据的两个分支：``status`` 都是 ``ok``（工具**跑通了**），
+    却都不是能拿去作答的数据。少了这一分支，「E9999」这种打错的工号会静默变成
+    "资料不足"，而模型本来还有一次机会换工具或改参数（提示词第 4 条）。
+    """
+    model = _PlannedModel([
+        ("PLAN_DONE", [{"name": "query_leave_balance", "args": {"employee_id": "E9999"}}]),
+        ("", []),
+    ])
+
+    decision = run_tool_agent("E9999 的年假还剩几天", model=model)
+
+    assert decision.plan_shortcut is False
+    assert len(model.calls) == 2
+    assert decision.steps[0].status == "ok"
+    assert decision.steps[0].usable is False
+
+
+def test_plan_shortcut_can_be_switched_off(monkeypatch, business_db):
+    """``TOOL_AGENT_PLAN_SHORTCUT=false`` → 与这个机制不存在时**完全一致**。
+
+    这条守的是"退路现成"：机制会缩小一处覆盖面（模型自认为一次够、实际不够时
+    就没有机会补查），所以它必须能一键回到旧行为。没有这条测试，那个开关就只是
+    配置里的一行注释——没人知道它到底还接不接着。
+    """
+    monkeypatch.setattr(config, "TOOL_AGENT_PLAN_SHORTCUT", False)
+    model = _PlannedModel([
+        ("PLAN_DONE", [{"name": "query_leave_balance", "args": {"employee_id": "E1001"}}]),
+    ])
+
+    decision = run_tool_agent("E1001 的年假还剩几天", model=model)
+
+    assert decision.plan_shortcut is False
+    assert len(model.calls) == 2, "关掉开关就是旧行为：第 2 轮照常发生"
+
+
+def test_plan_done_on_the_last_round_skips_nothing(business_db):
+    """``max_steps=1`` 时第 0 轮就是最后一轮——本来就该退出，"省"无从谈起。
+
+    第三道守卫（``round_index < steps_limit - 1``）守的是这个边界。它看起来像废话，
+    去掉也不会让正例变红（正例里 ``round_index=0``、``steps_limit=2``），但会让
+    ``PLAN_DONE`` 在**单轮配置**下照旧写一条"已省"的日志与埋点——观测数据会说
+    "省了一轮"，而实际上一次都没少调。**埋点错比没有埋点更糟**：它会把之后所有
+    关于收益的推断一起带偏。
+    """
+    model = _PlannedModel([
+        ("PLAN_DONE", [{"name": "query_leave_balance", "args": {"employee_id": "E1001"}}]),
+    ])
+
+    decision = run_tool_agent("E1001 的年假还剩几天", model=model, max_steps=1)
+
+    assert decision.plan_shortcut is False, "没有可省的轮次时不得记成已省"
+    assert len(model.calls) == 1
+
+
+def test_unrecognized_or_absent_plan_falls_back_to_the_old_two_rounds(business_db):
+    """正文里没有可识别的计划词 → 与这个机制不存在时行为一致（**默认保守**）。
+
+    真实模型偶尔会在调工具的那一轮写一句解释（「我这就帮你查。」）。认不出来就按
+    "没声明"处理，绝不能反过来"猜它大概是想说够了吧"——两条错误方向的代价不对称：
+    猜错的方向是用户拿到"资料不足"，保守的方向只是白花一次往返。
+    """
+    model = _PlannedModel([
+        ("我这就帮你查。", [{"name": "query_leave_balance", "args": {"employee_id": "E1001"}}]),
+        ("", []),
+    ])
+
+    decision = run_tool_agent("E1001 的年假还剩几天", model=model)
+
+    assert decision.plan_shortcut is False
+    assert len(model.calls) == 2
+
+
+def test_plan_shortcut_is_observable_in_the_span_and_the_payload(business_db):
+    """省与没省都必须可观测，否则"省了多少、省错几次"全靠猜。
+
+    ``plan`` 记在**当轮 span** 上（模型到底声明了什么），``plan_shortcut`` 记在
+    ``ToolDecision`` 与 ``tool`` span 上（最后到底省没省）。两个值分开记是必要的：
+    只有 ``plan=PLAN_DONE`` 而**没省**的那些请求，正是被第四道守卫救回的那一类，
+    它们的条数决定了"模型判断准不准"。
+    """
+    model = _PlannedModel([
+        ("PLAN_DONE", [{"name": "query_leave_balance", "args": {"employee_id": "E1001"}}]),
+    ])
+
+    decision, spans = _run_with_trace("E1001 的年假还剩几天", model)
+
+    first = [s for s in spans if s["name"] == "agent_step_0"]
+    assert len(first) == 1, "第 1 轮必然发生"
+    assert first[0]["attrs"]["plan"] == PLAN_DONE
+    assert decision.to_dict()["plan_shortcut"] is True
+
+
+def test_plan_word_never_leaks_into_a_direct_answer():
+    """直答出口的正文要过一遍剥离——计划词是**给机器看的**，不该给用户看。
+
+    约定上模型只在调工具时写计划词，但约定不是保证：这条路径下若原样透出，
+    用户看到的第一行就是 ``PLAN_DONE``。剥离放在**出口处**而不是"相信模型不会写"，
+    与 ``GROUNDED_ARGS`` 是同一个思路——把关卡放在能拦住的位置，不放在源头。
+    """
+    model = _PlannedModel([("PLAN_DONE\n请问你的工号是多少？我来查。", [])])
+
+    decision = run_tool_agent("我的年假还剩几天", model=model)
+
+    assert decision.is_direct
+    assert decision.direct_answer == "请问你的工号是多少？我来查。"
+    assert decision.plan_shortcut is False, "没有工具调用就没有「这一次够不够」这个问题"
+
+
+def test_a_lone_plan_word_is_not_silently_turned_into_an_empty_answer():
+    """整段正文**只有**计划词时保留原文——这是**有意的偏离**，别把它改成空串。
+
+    "正确"的做法似乎是剥干净（返回空串），但那会让两件完全不同的事在观测上同形：
+    ①模型什么都没说（模型故障 / 端点异常）；②模型只写了一个计划词（约定被违反）。
+    前者该报警，后者只是一行怪字符串。空串会让调用方以为直答出口被正常履行了，
+    用户却拿到一片空白——**静默失败比可见的异常难查得多**。
+    """
+    model = _PlannedModel([("PLAN_DONE", [])])
+
+    decision = run_tool_agent("我的年假还剩几天", model=model)
+
+    assert decision.is_direct
+    assert decision.direct_answer == "PLAN_DONE"
+
+
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("PLAN_DONE", PLAN_DONE),
+        ("PLAN_MORE", PLAN_MORE),
+        ("  PLAN_DONE  ", PLAN_DONE),                # 前后空白
+        ("**PLAN_DONE**", PLAN_DONE),                # 模型爱加粗
+        ("`PLAN_MORE`", PLAN_MORE),                  # 或者写成行内代码
+        ("plan_done", PLAN_DONE),                    # 大小写不敏感
+        ("PLAN_DONE\n我这就去查。", PLAN_DONE),       # 只看第一个非空行
+        ("\n\nPLAN_MORE\n先查工号。", PLAN_MORE),
+        ("PLAN_DONE。", PLAN_DONE),                  # 尾随标点：startswith 的取舍
+        ("我这就去查。", None),                       # 没有声明
+        ("计划：PLAN_DONE", None),                    # 不做模糊匹配
+        ("", None),
+        (None, None),
+    ],
+)
+def test_parse_plan_recognizes_only_the_declared_words(content, expected):
+    """计划词的识别范围必须**窄且可预测**：认不出来就按没声明处理。
+
+    刻意不做模糊匹配（不找子串、不看近义词），因为两条错误方向的代价不对称：
+    认错（把没声明的当成已声明）会让模型失去补查机会，用户拿到"资料不足"；
+    漏认只是白花一次往返。所以这里宁愿漏认。
+
+    注意 ``PLAN_DONE。`` 那一条：识别用的是 ``startswith``，为的是容忍尾随标点，
+    代价是 ``PLAN_DONEX`` 也会被认成 ``PLAN_DONE``。这是**有意的宽松**——
+    真实模型不会写出那种串，而尾随句号很常见。
+    """
+    assert _parse_plan(content) == expected
+
+
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("PLAN_DONE\n我这就去查。", "我这就去查。"),
+        ("PLAN_MORE\n\n先查工号，再查年假。", "先查工号，再查年假。"),
+        ("PLAN_DONE\n第一行\n第二行", "第一行\n第二行"),
+        ("没有计划词。", "没有计划词。"),
+        ("", ""),
+        (None, ""),
+        ("PLAN_DONE", "PLAN_DONE"),  # 孤儿计划词：保留原文，见上一条用例
+    ],
+)
+def test_strip_plan_token_removes_only_the_token_and_its_line(content, expected):
+    """剥离只吃掉"计划词那一行"，正文其余部分必须原样保留。
+
+    它作用在**直答出口**上，那里返回的是用户会直接读到的文本。多剥一行或少剥
+    一行都很难在别处发现——直答出口没有下游消费者会再校验一次。
+    """
+    assert _strip_plan_token(content) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ('{"ok": true, "data": {"employee_id": "E1001", "annual_leave": 5.0}}', True),
+        ('{"ok": true, "data": {"ambiguous": false, "candidates": [{"employee_id": "E1001"}]}}', True),
+        ('{"ok": true, "data": {"ambiguous": true, "candidates": [{}, {}]}}', False),
+        ('{"ok": false, "error": "not_found", "message": "未找到该员工"}', False),
+        ('{"ok": false, "error": "invalid_argument"}', False),
+        ("这不是 JSON", False),
+        ("[1, 2]", False),   # 顶层不是对象
+        ("", False),
+        (None, False),
+    ],
+)
+def test_payload_usability_requires_ok_and_no_ambiguity(raw, expected):
+    """"可用"= ``ok:true`` **且**不是重名歧义——两条都要满足。
+
+    解析不出来一律按**不可用**处理。两个方向的错误代价不对称：说"不可用"只是多花
+    一次往返；说"可用"却可能让用户拿到一个被替选中的答案，而且看不出来选过。
+    """
+    assert _payload_is_usable(raw) is expected
+
+
+def test_not_found_still_hands_the_answer_back_to_l4(business_db):
+    """``usable=False`` **不能**拿来判断走哪个出口——这两个判据必须分开。
+
+    ``used_tools`` 的判据是 ``status == "ok"``（工具**跑通了**）。若顺手改成
+    ``usable``，查无此人时就会落进直答出口：模型说什么就是什么。它完全可能把
+    ``not_found`` 说成「该员工年假剩余 0 天」——而"查不到这个人"与"余额是 0"
+    是两件事（提示词第 4 条专门要求分清）。成文权必须在 L4。
+    """
+    model = _PlannedModel([
+        ("", [{"name": "query_leave_balance", "args": {"employee_id": "E9999"}}]),
+        ("", []),
+    ])
+
+    decision = run_tool_agent("E9999 的年假还剩几天", model=model)
+
+    assert not decision.is_direct, "查无此人仍走证据出口"
+    assert decision.used_tools == ["query_leave_balance"]
+    assert "not_found" in decision.tool_results[0]
+
+
+def test_agent_prompt_declares_the_two_plan_words_and_when_not_to_write_them():
+    """提示词是计划词约定的**唯一**来源，且必须说清"什么时候不写"。
+
+    "不调用工具时不要写这个词"这半句不是修辞：直答出口的正文会原样给用户，
+    少了这半句，模型可能在追问用户的句子上也带一个 ``PLAN_DONE``。出口处固然还有
+    ``_strip_plan_token`` 兜底，但那是护栏、不是可以省掉约定的借口。
+
+    两个词在**语义上**必须各有定义，不只是出现名字——光有 ``PLAN_DONE`` 这个词
+    而没有"拿到结果后我就能回答用户了"这句，模型没有任何依据去判断该写哪个。
+    换言之本条守的是**约定可被理解**，不是"字符串出现过"。
+
+    ⚠️ 反向验证：把 ``prompts.py`` 里整段（``【发出工具调用时……`` 到那个右括号
+    结尾的示例行）删掉，本条必须变红。只删段落标题**不足以**让它变红——
+    这几条断言用的是段内的字样，不是标题。
+    """
+    from app.core.tool_agent import SYSTEM_PROMPT
+
+    assert PLAN_DONE in SYSTEM_PROMPT
+    assert PLAN_MORE in SYSTEM_PROMPT
+    # 两个词的语义定义：模型据此判断该写哪一个。
+    assert "这次调用拿到结果后，我就能回答用户了" in SYSTEM_PROMPT
+    assert "这次只是中间一步" in SYSTEM_PROMPT
+    # 约定里必须包含"什么时候不写"，否则追问用户时也会带上这个词。
+    assert "不调用工具时不要写这个词" in SYSTEM_PROMPT
+    assert "正文里除了这一个词之外" in SYSTEM_PROMPT
 
 
 # ===========================================================================

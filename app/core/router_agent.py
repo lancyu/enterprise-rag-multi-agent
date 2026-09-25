@@ -64,7 +64,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app import config
 from app.core.llm_access import content_of, default_model
@@ -158,6 +158,17 @@ class RouteDecision:
     degraded: bool = False
     #: 越界场景的对外话术。由 ``out_of_scope_node`` 写入答案。
     out_of_scope_answer: Optional[str] = None
+    #: **本地漏斗为什么没判**（``no_candidate`` / ``low_floor`` / ``tight_margin``
+    #: / ``budget_exceeded``；取值域见 ``app/core/routing/gating.py``）。
+    #: 本地快通道采信时为 ``None``；空提问时为 ``None``。
+    #:
+    #: 它与 ``source`` 是**两个不同的问题**：``source`` 说"最后是谁拍的板"，
+    #: 它说"漏斗当时为什么判不了"。合成一个字段就回答不了下游真正要问的那句：
+    #: *这句话是「在几个通道之间摇摆」，还是「只是与例句不像」？*
+    #: 前者说明路由可能判错（值得复核），后者只说明例句没覆盖这种问法——
+    #: 而模型路由读的是能力描述，本来就是给这类句子准备的。
+    #: 证据校验的触发判据要的正是这个区分（见 ``app/core/verifier.should_verify``）。
+    gray_reason: Optional[str] = None
     #: 模型原始输出，仅用于排障（不进日志正文、只截断入 trace）。
     raw: str = ""
     error: Optional[str] = None
@@ -169,6 +180,7 @@ class RouteDecision:
             "confidence": round(float(self.confidence or 0.0), 3),
             "source": self.source,
             "degraded": self.degraded,
+            "gray_reason": self.gray_reason,
         }
 
 
@@ -194,8 +206,22 @@ _LOCAL_TRUSTED_SOURCES = (SOURCE_ANCHOR, SOURCE_LEXICAL)
 _LOCAL_BUDGET_MS = 0
 
 
-def _local_route(query: str) -> Optional[RouteDecision]:
-    """用本地漏斗做一次**零模型**判定；判不了返回 ``None``（交由模型路由）。
+def _local_route(query: str) -> Tuple[Optional[RouteDecision], Optional[str]]:
+    """用本地漏斗做一次**零模型**判定。
+
+    Returns:
+        ``(判定, 灰区原因)``。漏斗判得了时判定非空、灰区原因为 ``None``；
+        判不了时判定为 ``None``，而**灰区原因照实带回**。
+
+    为什么要把灰区原因带出来，而不是跟着判定一起丢掉
+    --------------------------------------------------
+    它区分了两件下游必须分开处理的事：``tight_margin``（在几个通道之间咬得
+    很紧）说明这次判定**本身就不稳**，``low_floor`` / ``no_candidate``
+    （分不够 / 没有候选）说明**只是这句话与例句不像**、而模型路由读能力描述
+    本来就擅长这类。把它们合并成"漏斗没判"，下游就只剩一个无差别的大桶，
+    只能一律按可疑处理——实测那会让 85% 的正常提问都被拉去复核（见
+    ``app/core/verifier.should_verify``）。所以它是**判定之外的第二组事实**，
+    必须在漏斗结论还活着的时候取走。
 
     为什么值得插这一刀
     ------------------
@@ -210,16 +236,16 @@ def _local_route(query: str) -> Optional[RouteDecision]:
     也就不存在"映射表与常量悄悄漂移"这一类缺陷。
     """
     if not (query or "").strip():
-        return None
+        return None, None
     try:
         decision = match_intent(query, budget_ms=_LOCAL_BUDGET_MS)
     except Exception as exc:  # noqa: BLE001
         # 漏斗文档承诺"永不抛异常"，但它是**新加的一道闸门**：异常若漏出来
         # 会打断整轮回答。这里再兜一层，判不了就当它没说话。
         logger.warning("本地漏斗异常，改由模型路由：%s", exc)
-        return None
+        return None, None
     if decision.source not in _LOCAL_TRUSTED_SOURCES:
-        return None
+        return None, decision.gray_reason
 
     logger.info(
         "本地快通道命中：scene=%s（%s）%s，本轮未调用路由模型",
@@ -238,7 +264,7 @@ def _local_route(query: str) -> Optional[RouteDecision]:
         out_of_scope_answer=(
             OUT_OF_SCOPE_ANSWER if decision.channel == SCENE_OUT_OF_SCOPE else None
         ),
-    )
+    ), None
 
 
 def route_query(
@@ -246,6 +272,7 @@ def route_query(
     chat_history: Optional[List[Dict[str, str]]] = None,
     memory_context: str = "",
     model: Optional[Any] = None,
+    feedback: str = "",
 ) -> RouteDecision:
     """判定本轮该由哪个 Agent 处理。**永不抛异常。**
 
@@ -256,32 +283,55 @@ def route_query(
             "这句话本身要干什么"，把历史记忆塞进来只会增加误判面。
             保留参数是为了与其它 Agent 的签名形状一致（调用方无需按 Agent 分类）。
         model: 注入用模型（测试传假模型）。默认取 ``get_chat_model()``。
+        feedback: 上一轮被退回时的反馈文本（``router_retry`` 渲染结果）。
+            非空表示**这是二次判定**，见下面「二次判定」一节。
 
     Returns:
         RouteDecision。任何异常都被收敛成确定性规则的结果 —— 路由**不能**是
         本轮失败的原因，它是所有路径的入口。
+
+    二次判定（``feedback`` 非空）与首次判定的两点差别
+    ------------------------------------------------
+    1. **不走本地快通道**。漏斗的锚定层与词面层只看这句话的字面，同一个句子
+       必然得到同一个结论——采信它等于原地打转，白绕一圈还多花一次调用。
+       这不是"漏斗不可靠"，而是它回答的问题（"这句话的措辞像哪一类"）在
+       二次判定里已经没有信息量了。
+    2. **把上一轮的结论与被退回的原因写进提示词**，见 ``prompts.PROMPTS["router_retry"]``。
+       不告诉模型这些，它同样只能重新猜一次。
     """
+    #: 本地漏斗为什么没判（``no_candidate`` / ``low_floor`` / ``tight_margin``
+    #: / ``budget_exceeded``）。见 ``RouteDecision.gray_reason``：它不是排障用的
+    #: 附注，而是下游"这一轮要不要复核证据"的判据之一（``verifier.should_verify``），
+    #: 因此要跟着**每一条**未采信漏斗的返回路径走下去。
+    gray_reason: Optional[str] = None
+
     if not (query or "").strip():
         return _fallback_route(query, "空提问")
 
     # ── 本地快通道（零模型）──────────────────────────────────────────────
-    # 两个前置条件缺一不可：
+    # 三个前置条件缺一不可：
     #
     # ① ``model is None`` —— 注入 model 的语义是"这次路由交给这个模型判"，
     #    测试正是靠它隔离外部依赖。若在这里也插一脚，注入的假模型就永远
     #    轮不到：那不是隔离，是掩蔽。
     # ② ``USE_REAL_LLM`` —— 离线（未配 Key）走的是 Mock 模型 + 确定性兜底，
     #    那是一条刻意设计的降级路径。本次改动只为降延迟，不该顺手改其行为。
-    if model is None and config.USE_REAL_LLM:
-        local = _local_route(query)
+    # ③ ``not feedback`` —— 二次判定时漏斗给不出新信息（理由见 docstring）。
+    if model is None and config.USE_REAL_LLM and not feedback:
+        local, gray_reason = _local_route(query)
         if local is not None:
             return local
 
     # 离线（未配 Key）时不浪费一次必然失败的模型调用：直接走确定性规则。
     # 这不是"省一次调用"，而是避免 Mock 模型返回一段与分类无关的文本后
     # 还要走一遍解析失败的分支——行为可预期比"多试一次"更重要。
+    #
+    # 二次判定时同样走这里：规则兜底给出的结论会与上一轮相同，但**不会**
+    # 无限重复——``verifier_route_edge`` 的重试预算是有上界的（见该函数）。
     if model is None and not config.USE_REAL_LLM:
-        return _fallback_route(query, "未配置真实模型（离线模式）")
+        return _fallback_route(
+            query, "未配置真实模型（离线模式）", gray_reason=gray_reason
+        )
 
     try:
         chat = model or default_model()
@@ -289,6 +339,7 @@ def route_query(
             "router",
             chat_history=_format_history(chat_history),
             user_query=query,
+            route_feedback=feedback,
         )
         with span("router") as s:
             reply = chat.invoke(prompt)
@@ -297,7 +348,9 @@ def route_query(
         parsed = _parse_route(raw)
         if parsed is None:
             logger.warning("路由输出无法解析为合法场景，回落确定性规则：%r", raw[:120])
-            return _fallback_route(query, "路由输出不可解析", raw=raw)
+            return _fallback_route(
+                query, "路由输出不可解析", raw=raw, gray_reason=gray_reason
+            )
 
         scene, reason, confidence = parsed
         decision = RouteDecision(
@@ -306,6 +359,7 @@ def route_query(
             confidence=confidence,
             source="router",
             out_of_scope_answer=OUT_OF_SCOPE_ANSWER if scene == SCENE_OUT_OF_SCOPE else None,
+            gray_reason=gray_reason,
             raw=raw,
         )
         logger.info(
@@ -316,7 +370,12 @@ def route_query(
         # 路由失败**绝不**升级为本轮失败：它有一条确定性的降级路径，
         # 而且它是所有路径的入口——入口抛异常等于整轮无回答。
         logger.warning("路由 Agent 调用失败，回落确定性规则：%s", exc)
-        return _fallback_route(query, f"路由调用失败：{type(exc).__name__}", error=str(exc))
+        return _fallback_route(
+            query,
+            f"路由调用失败：{type(exc).__name__}",
+            error=str(exc),
+            gray_reason=gray_reason,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +456,7 @@ def _fallback_route(
     reason: str,
     raw: str = "",
     error: Optional[str] = None,
+    gray_reason: Optional[str] = None,
 ) -> RouteDecision:
     """保守的确定性路由：只认「明确是寒暄」，其余一律 ``simple_rag``。
 
@@ -422,6 +482,7 @@ def _fallback_route(
         confidence=0.0,
         source="router:fallback",
         degraded=True,
+        gray_reason=gray_reason,
         raw=raw,
         error=error,
     )

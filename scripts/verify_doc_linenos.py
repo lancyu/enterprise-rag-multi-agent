@@ -340,6 +340,37 @@ def config_partition_spans(config_path: str = "app/config.py") -> list[tuple[int
     ]
 
 
+#: 第 15 类：**函数级区间** —— 反引号里带括号、或名字与括号之间夹着说明文字的写法。
+#:
+#: 它补的是第 12 类**隔壁**的形状。第 12 类只认 `` `名字`（A-B）`` 这一种（反引号里
+#: 必须是裸标识符，括号里最多再跟一小段逗号后缀），于是下面三种一直没人管：
+#:
+#:   `` `_wire(graph, generation_target=...)`（125-201）``    反引号里带参数
+#:   `` `conditional_branch_count()`（107-122）``             名字后面带一对空括号
+#:   ``**忠实度 `score_faithfulness` 怎么算**（233-246）``     名字与括号之间夹了文字
+#:
+#: 实测（2026-09-24）：摘掉 `tool → verifier` 那条边后 `workflow_graph.py` 整体下移，
+#: 上面这一类的数字一次漂了 5 处（另有 2 处是更早就错的），而校验器连报三轮
+#: 「701 条全部一致」——**盲区里的数字错了，门禁不知道**。
+#:
+#: 判据与前两类不同，**不看章节目录**：第 12 类就有一次因为「一节小标题点名了两个
+#: 文件、上下文只继承到第一个」而把整条引用按"越界"跳过（`` `build_workflow_graph`
+#: （204-213，10 节点）`` 落在被继承到的 `edges.py` 的 163 行之外，静默放行）。
+#: 本类改用**符号自己的定义处**定位：只要文档写的区间等于该名字**任意一处**的
+#: AST 跨度就通过——这也顺带覆盖了「同名符号散在多个文件」的情况。
+#:
+#: 三个刻意的漏判（沿用「宁可漏判不可误判」）：
+#:   ① 起点 < 1 → 跳过。行号是 1 基的，而「值域」不是：`docs/multi-agent-architecture.md`
+#:      里写着「`confidence` 是模型的自评（0~1）」，因为 `confidence` 恰好也是
+#:      `state.py` 的字段名，本类刚上线时把这一句报成了
+#:      「`confidence` 文档写 0-1，AST 实为 …」。**判据越依赖名字，越要留出
+#:      "这个词在这里只是普通名词"的余地。**
+#:   ② 全仓找不到同名符号 → 跳过（散文里的普通词可能恰好与某个函数同名）；
+#:   ③ 第 12 类已覆盖的那一处 → 跳过，避免同一处被计两次、报两遍。
+_R15_CALL_REF_RE = re.compile(r"`([^`]+)`([^`（(]{0,30})[（(]\s*(\d+)\s*[-–~]\s*(\d+)")
+_R15_IDENT_RE = re.compile(r"([A-Za-z_]\w*)")
+
+
 def verify(doc_path: str) -> list[str]:
     """返回不一致清单；空列表表示全部通过。"""
     symbols: dict = {}
@@ -829,6 +860,42 @@ def verify(doc_path: str) -> list[str]:
                 problems.append(
                     f"L{lineno}: 文档点名的符号 `{name}` 在代码里不存在"
                     f"（以 `_edge` / `_node` 结尾的名字必须真实存在）"
+                )
+
+    # --- 函数级区间（第 15 类）---
+    # 判据与两个刻意的漏判，见 `_R15_CALL_REF_RE` 上方注释。
+    # 索引按**符号名**建而非按文件：本类要修的失效正是"文件被定位错了"。
+    sym_spans: dict[str, set[tuple[int, int, str]]] = {}
+    for ref_file, bucket in symbols.items():
+        for name, spans in bucket.items():
+            for start, end in spans:
+                sym_spans.setdefault(name, set()).add((start, end, ref_file))
+    for lineno, line in enumerate(lines, 1):
+        covered_by_class12 = {
+            (mm.group(1), int(mm.group(2)), int(mm.group(3)))
+            for mm in _R12_SYM_PAREN_RE.finditer(line)
+        }
+        for mm in _R15_CALL_REF_RE.finditer(line):
+            raw, gap = mm.group(1), mm.group(2)
+            start, end = int(mm.group(3)), int(mm.group(4))
+            if start < 1:
+                continue                      # ① 行号从 1 起；0 开头的是值域（见上方注释）
+            if "(" not in raw and ")" not in raw and not gap.strip():
+                continue                      # ② 第 12 类的形状，由它去管
+            ident = _R15_IDENT_RE.match(raw)
+            if not ident:
+                continue
+            name = ident.group(1)
+            spans = sym_spans.get(name)
+            if not spans:
+                continue                      # ③ 全仓找不到同名符号
+            if (name, start, end) in covered_by_class12:
+                continue                      # ③' 第 12 类已经计过/查过这一处
+            counted += 1
+            if not any((start, end) == (s, e) for s, e, _ in spans):
+                where = "、".join(f"{f}:{s}-{e}" for s, e, f in sorted(spans))
+                problems.append(
+                    f"L{lineno}: `{name}` 文档写 {start}-{end}，AST 实为 {where}"
                 )
 
     print(f"校验 {doc_path}：共 {counted} 条行号声明")

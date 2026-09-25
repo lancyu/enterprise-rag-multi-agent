@@ -23,8 +23,8 @@ dataclass 与三份 trace 写法，而它们必须保持一致——分开写必
 检索失败可降级（L4 的"没找到"与真实语义一致，记 ``soft_warnings``），
 所以这里的 ``error`` 只留给"这个 Agent 本身不可用"这类情况。
 
-闲聊 Agent 为什么**不调模型**
-=============================
+闲聊 Agent 为什么**默认不调模型**（但留了一个开关）
+==================================================
 用户给这个 Agent 的定位是「不访问知识库、不调用任何工具，避免闲聊误触发 RAG 或
 FunctionCall 而浪费 token」。模板直出是对这句话的最强落实：0 次模型调用、
 0 次检索、0 幻觉。三个理由按重要性排序：
@@ -40,6 +40,18 @@ FunctionCall 而浪费 token」。模板直出是对这句话的最强落实：0
 代价照实说：措辞固定、不会因人因时变化；"你是谁"的回答是一张能力清单。
 这是可接受的——能力清单本就该固定，它同时是**对模型的约束**（写死的清单不会
 被模型发挥出不存在的能力）。
+
+``SMALLTALK_LLM_ENABLED``（默认 **false**）是对上述第 1、3 条的**有限让步**，
+不是推翻它们：
+
+- 只有**问候 / 致谢 / 道别**三类会走模型（见 :data:`_SMALLTALK_LLM_TEMPLATES`）。
+  这三类是纯客套，**不含任何业务事实可编**，所以第 1 条的风险在这三类上接近于零；
+- **身份询问与兜底话术永远走模板**。它们不是措辞，而是能力边界与兜底行为——
+  把能力清单交给模型重写，正是第 3 条要防的事；
+- 模板仍作为 ``reference`` 传进提示词：模板从"最终文本"变成"对模型的约束"，
+  这样开启开关也不会让回复跑出既定定位；
+- 模型调用失败 / 超时 / 输出为空或过长 → **回落模板**。模板直出永远可用，
+  一次可选增益不该变成闲聊路径上的新失败点。
 """
 from __future__ import annotations
 
@@ -140,15 +152,64 @@ def _pick_smalltalk_reply(query: str) -> tuple:
     return "default", _SMALLTALK_DEFAULT
 
 
-def run_smalltalk_agent(query: str) -> AgentAnswer:
-    """寒暄 / 身份询问的直答。**不读知识库、不调工具、不调模型。**"""
+#: 允许走轻量模型的模板名 —— **只有纯客套这三类**（理由见模块 docstring）。
+#:
+#: ``identity`` 与 ``default`` 刻意不在其中：前者是能力清单，后者是"既没匹配上
+#: 也没话说"的兜底。把兜底路径接上一次可能失败的模型调用，等于给"闲聊绝不该失败"
+#: 这条性质开了一个口子。
+_SMALLTALK_LLM_TEMPLATES = frozenset({"greeting", "thanks", "bye"})
+
+#: 轻量改写的输出长度上限（字符）。超长说明模型开始"发挥"，直接回落模板。
+_SMALLTALK_LLM_MAX_CHARS = 60
+
+
+def _llm_smalltalk(query: str, reference: str, model: Optional[Any] = None) -> Optional[str]:
+    """对低风险寒暄做一次轻量改写；**任何失败返回 ``None``**（调用方回落模板）。
+
+    失败即回落而不是失败即报错：模板直出永远可用，模型只是让措辞不那么固定。
+    把一次可选的增益接成必需品，等于给闲聊路径引入一个它本来没有的失败点
+    ——离线、超时、模型返回空串都会中招。
+
+    ``reference`` 是那张模板本身：它从"最终文本"变成"对模型的约束"，
+    于是开启开关也不会让回复跑出既定定位。
+    """
+    if model is None and not config.USE_REAL_LLM:
+        return None
+    try:
+        chat = model or default_model()
+        reply = content_of(
+            chat.invoke(render_prompt("smalltalk", reference=reference, user_query=query))
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("闲聊轻量改写失败，回落模板：%s", exc)
+        return None
+
+    text = (reply or "").strip().strip("\"'“”「」")
+    if not text or len(text) > _SMALLTALK_LLM_MAX_CHARS:
+        logger.warning("闲聊轻量改写输出不可用（%d 字），回落模板", len(text))
+        return None
+    return text
+
+
+def run_smalltalk_agent(query: str, model: Optional[Any] = None) -> AgentAnswer:
+    """寒暄 / 身份询问的直答。**默认不读知识库、不调工具、不调模型。**
+
+    只有 ``config.SMALLTALK_LLM_ENABLED`` 为真、且模板属于纯客套三类时，
+    才会额外走一次轻量模型调用（见 :func:`_llm_smalltalk`）。
+    """
     with span("smalltalk") as s:
         name, reply = _pick_smalltalk_reply(query)
+        source = "template"
+        if config.SMALLTALK_LLM_ENABLED and name in _SMALLTALK_LLM_TEMPLATES:
+            rewritten = _llm_smalltalk(query, reply, model=model)
+            if rewritten:
+                reply, source = rewritten, "llm"
         s.attrs["template"] = name
-    logger.info("闲聊 Agent 模板直出：template=%s", name)
+        s.attrs["source"] = source
+    logger.info("闲聊 Agent 直出：template=%s source=%s", name, source)
     return AgentAnswer(
         text=reply,
-        steps=[{"node": "smalltalk", "kind": "template", "detail": name, "elapsed_ms": 0}],
+        steps=[{"node": "smalltalk", "kind": source, "detail": name, "elapsed_ms": 0}],
     )
 
 

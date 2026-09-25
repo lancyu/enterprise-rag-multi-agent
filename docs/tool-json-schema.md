@@ -546,7 +546,7 @@ Args 类的 docstring 渲染成 JSON Schema 的顶层 `description`。所以：
 |---|---|---|
 | 参数抽取 | 模型（`bind_tools` + `AGENT_TOOLS`） | 不写离线抽取规则——规则时代"修 A 坏 B"，见 `docs/history/tool-invocation-online-vs-offline.md` |
 | 缺失信息追问 | `_decide` 的直答出口 | 本轮**一次都没成功取到证据**时，模型自己的话就是答案（典型即追问） |
-| 链式调用 | `TOOL_AGENT_MAX_STEPS`（默认 3） | 先 `find_employee_by_name` 拿工号，再 `query_leave_balance`；同一轮也可并行发多个调用 |
+| 链式调用 | `TOOL_AGENT_MAX_STEPS`（默认 2） | 先 `find_employee_by_name` 拿工号，再 `query_leave_balance`；同一轮也可并行发多个调用。两轮是链式依赖的结构性下限——第二跳的参数取自第一跳的返回值，模型必须先看见它 |
 | SQLite 查询 | 本模块的 3 个工具 | 制度类问题**不在这里**——由简单/复杂 RAG Agent 负责 |
 
 ### 7.1 「我的年假还剩几天」为什么会被追问

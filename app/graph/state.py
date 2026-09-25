@@ -71,6 +71,17 @@ class GraphState(TypedDict, total=False):
     scene_confidence: float
     #: router（模型判定）/ router:local（本地漏斗零模型判定）/ router:fallback（规则兜底）
     scene_source: str
+    #: **本地快通道为什么没判**：no_candidate / low_floor / tight_margin /
+    #: budget_exceeded（取值域见 ``app/core/routing/gating.py``）；走本地快通道
+    #: 或空提问时为空串。
+    #:
+    #: 它与 ``scene_source`` 回答的是**两个不同问题**：后者是"最后谁拍的板"，
+    #: 它才是"这次判定稳不稳"。下游只认后者来触发证据复核（见
+    #: ``app/core/verifier.should_verify``）：``tight_margin``（在几个通道之间
+    #: 咬得很紧）说明路由可能判错，而 ``low_floor`` / ``no_candidate``（分不够 /
+    #: 没有候选）只说明这句话与例句不像——模型路由读能力描述本来就擅长这类，
+    #: 不该为它多花一次校验。实测把两者混为一谈时，85% 的正常提问都会被拉去复核。
+    route_gray_reason: str
     #: 复杂 RAG 实际用于检索的查询（含原问题）。拆歪了是静默错误，故必须可见。
     sub_queries: List[str]
     #: 工具 Agent 报告"我干不了活"（模型不支持 function calling）。
@@ -88,12 +99,44 @@ class GraphState(TypedDict, total=False):
 
     # --- 证据 ---
     retrieve_docs: List[Dict[str, Any]]
+    #: 工具 Agent 取回的业务数据（JSON 信封拼成的文本），**原文**进 L4 上下文。
+    #:
+    #: 它**也**进证据校验（2026-09-24 二次定案）：工具链路的 ``retrieve_docs``
+    #: 恒为空，本轮证据**全在这个字段里**，所以它是 ``verify_evidence`` 的必传入参
+    #: —— 漏传会让工具轮停在"没有证据可校验"上静默跳过，边形同白接。
+    #: （这条边被摘掉过又接回来，过程见 ``app/graph/edges.py::tool_route_edge``。）
     tool_result: Optional[str]
     # 检索置信度（0~1，来自 generator.estimate_confidence）。
     #
     # 为什么必须进 state：它同时是**拒答判定的输入**与**对外展示的字段**，
     # 两者必须用同一个数——分别算一次就会出现"面板显示有依据、答案却说没找到"。
     retrieval_confidence: Optional[float]
+
+    # --- 证据校验（Verifier）与「退回重路由」---
+    #: 证据是否与问题语义对齐。``None`` = **未做过校验**（按需判据说不需要 /
+    #: 校验已关闭 / 没有证据可校验）。
+    #: 注意 ``None`` 与 ``False`` 是两件事：前者是"这一轮没查"，后者是"查了、
+    #: 判定为不符" —— 条件边只对 ``False`` 改道。
+    #: **按需触发之后 ``None`` 是常态**（大部分检索是对的，不值得逐轮复核），
+    #: 所以把它读成"对齐"或"不符"的写法都会大面积出错。
+    #:
+    #: 走到这个节点的有 ``simple_rag`` / ``complex_rag`` / ``tool`` **三个**证据
+    #: 出口。工具轮次的证据在 ``tool_result`` 里（``retrieve_docs`` 为空），
+    #: 所以"证据为空"不能只看 ``retrieve_docs``（见 ``should_verify``）。
+    evidence_aligned: Optional[bool]
+    #: 校验结论的理由（人话，供前端面板与排障）。判定词本身不进这里。
+    verify_reason: str
+    #: ``verifier``（模型判定）/ ``verifier:skipped``（按需跳过、已关闭或无证据）
+    #: / ``verifier:degraded``（调用失败、超时或输出不可解析，已放行）
+    verify_source: str
+    #: 校验判定「不符」的**累计次数**（也就是已经发生过的退回次数）。
+    #:
+    #: 它是这条环路的**唯一刹车**：``verifier → router`` 是图里唯一的环，没有
+    #: 上界就是死循环（LangGraph 撞上递归上限会以异常收场，那不是"降级"）。
+    #: ``verifier_route_edge`` 的判据是 ``次数 <= config.ROUTE_RETRY_BUDGET``：
+    #: 预算 1 时，第 1 次不符允许退回重判，第 2 次不符就走生成。
+    #: 由 ``verifier_node`` 在判定不符时 +1 —— 边只读状态，不自己改状态。
+    reroute_count: int
 
     # --- 产出 ---
     answer: Optional[str]
@@ -145,6 +188,7 @@ def create_initial_state(
         scene_reason="",
         scene_confidence=0.0,
         scene_source="",
+        route_gray_reason="",
         sub_queries=[],
         tool_degraded=False,
         intent_type=None,
@@ -156,6 +200,10 @@ def create_initial_state(
         retrieve_docs=[],
         tool_result=None,
         retrieval_confidence=None,
+        evidence_aligned=None,
+        verify_reason="",
+        verify_source="",
+        reroute_count=0,
         answer=None,
         citations=[],
         confidence=0.0,

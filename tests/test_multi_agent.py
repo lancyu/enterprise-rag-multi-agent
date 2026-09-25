@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
@@ -40,6 +41,11 @@ from app.core.router_agent import (
     SCENES,
     RouteDecision,
     route_query,
+)
+from app.core.verifier import (
+    TRIGGER_DEGRADED,
+    TRIGGER_TIGHT_ROUTE,
+    TRIGGER_WEAK_EVIDENCE,
 )
 from app.graph.edges import scene_route_edge, tool_route_edge
 from app.graph.state import create_initial_state
@@ -213,6 +219,36 @@ def test_router_node_records_degradation_in_state(monkeypatch):
     assert out["route_decision"]["degradations"]
 
 
+def test_router_node_carries_the_gray_reason_into_state(monkeypatch):
+    """漏斗"为什么没判"必须落到 state —— 证据校验读的就是它。
+
+    ``router_node`` 是这条信息的**唯一入口**：漏写一步，``verifier_node`` 就只
+    读得到空串，"路由摇摆"这一类再也触发不了复核 —— 而且**不会有任何报错**，
+    面板上只会显示"证据无异常"。
+
+    ``None`` 归一化成空串（本地快通道判了 / 拿不到这个信息）：两者混用会让
+    "没有这个信息"与"漏斗看过、没问题"在观测上同形。
+
+    ⚠️ 反向验证：删掉 ``router_node`` 里的
+    ``new_state["route_gray_reason"] = decision.gray_reason or ""``，本条必须变红。
+    """
+    from app.graph import nodes
+
+    monkeypatch.setattr(nodes, "route_query",
+                        lambda **kw: RouteDecision(scene=SCENE_SIMPLE_RAG, reason="测试",
+                                                   source="router", gray_reason="tight_margin"))
+    out = nodes.router_node(create_initial_state(user_query="年假多少天", session_id="s"))
+    assert out["route_gray_reason"] == "tight_margin"
+    assert out["route_decision"]["gray_reason"] == "tight_margin"
+
+    # 本地快通道判得了 → 漏斗的 gray_reason 是 None → state 里落到空串
+    monkeypatch.setattr(nodes, "route_query",
+                        lambda **kw: RouteDecision(scene=SCENE_SIMPLE_RAG, reason="测试",
+                                                   source="router:local"))
+    local = nodes.router_node(create_initial_state(user_query="年假多少天", session_id="s"))
+    assert local["route_gray_reason"] == ""
+
+
 # ---------------------------------------------------------------------------
 # 本地快通道：零模型判定
 #
@@ -256,6 +292,37 @@ def test_local_fast_path_leaves_the_gray_zone_to_the_model(monkeypatch):
     assert decision.scene == SCENE_COMPLEX_RAG
     assert decision.source == "router"
     assert stub.calls, "漏斗判不了时应当落到模型上"
+
+
+def test_gray_reason_survives_the_model_path(monkeypatch):
+    """漏斗"为什么没判"必须活到路由结论里 —— 它是证据校验的触发判据之一。
+
+    这条断言看着像在测一个排障字段，其实守的是**通路**：``gray_reason`` 从漏斗
+    出发，穿过 ``_local_route`` → ``route_query`` 的模型分支 → ``RouteDecision``
+    → ``router_node`` → ``GraphState``。中间任何一处漏传，下游就只剩"漏斗没判"
+    这个无差别的大桶，只能一律按可疑处理（实测那会让 85% 的正常提问被拉去复核）。
+
+    为什么不能只看最终效果：``gray_reason`` 丢失的默认表现是"什么都不触发"，
+    与"这一轮确实没问题"完全同形 —— 静默、不报错、指标还更好看。
+
+    ⚠️ 反向验证：删掉 ``route_query`` 模型分支里的 ``gray_reason=gray_reason``，
+    本条必须变红。
+    """
+    from app.core import router_agent
+
+    monkeypatch.setattr(config, "USE_REAL_LLM", True)
+    stub = _TextModel(
+        json.dumps({"route": SCENE_COMPLEX_RAG, "reason": "测试", "confidence": 0.9})
+    )
+    monkeypatch.setattr(router_agent, "default_model", lambda: stub)
+
+    decision = route_query("请帮我分析一下当前国际形势对我们部门明年预算的影响")
+
+    assert decision.source == "router", "这条问句应当落到模型上"
+    assert decision.gray_reason in {
+        "no_candidate", "low_floor", "tight_margin", "budget_exceeded",
+    }, f"漏斗的灰区原因在模型分支上被丢掉了：{decision.gray_reason!r}"
+    assert decision.to_dict()["gray_reason"] == decision.gray_reason
 
 
 def test_injecting_a_model_bypasses_the_local_fast_path():
@@ -472,13 +539,98 @@ def test_smalltalk_never_touches_retrieval_or_tools(monkeypatch):
     assert out["retrieve_docs"] == []
 
 
-def test_no_smalltalk_prompt_is_registered():
-    """闲聊**没有提示词**——这不是遗漏，而是"不调模型"的结构性证据。
+def test_smalltalk_prompt_is_opt_in_and_covers_only_safe_templates():
+    """闲聊的模型路径**必须是可选的**，且只覆盖纯客套三类。
 
-    一旦有人往注册表里加了 ``smalltalk``，说明闲聊又走回模型生成，
-    那也意味着它重新获得了"编造事实"的能力。
+    ⚠️ 这条以前写的是 ``assert SCENE_SMALLTALK not in PROMPTS``——把「闲聊没有
+    提示词」当作"不调模型"的结构性证据。需求变化后（允许在低风险场景下行一次
+    轻量模型调用，见 ``config.SMALLTALK_LLM_ENABLED``）那个断言不再成立，
+    但它想守的**性质**仍然成立。所以这里改成直接守性质，而不是把断言删掉——
+    删掉就等于"这个仓库不再有人在看闲聊会不会偷偷调模型"。
+
+    守三条：
+      1. 提示词真实存在（开了可选路径却查无提示词，说明配置与实现脱节）；
+      2. 允许走模型的模板**恰好**是问候 / 致谢 / 道别——纯客套，不含业务事实；
+      3. 身份询问与兜底话术**不在其中**（见下一条测试的证明）。
     """
-    assert SCENE_SMALLTALK not in PROMPTS
+    from app.core.sub_agents import _SMALLTALK_LLM_TEMPLATES
+
+    assert "smalltalk" in PROMPTS, "开启了可选模型路径，提示词就必须真实存在"
+    assert _SMALLTALK_LLM_TEMPLATES == {"greeting", "thanks", "bye"}
+    assert "identity" not in _SMALLTALK_LLM_TEMPLATES
+    assert "default" not in _SMALLTALK_LLM_TEMPLATES
+
+
+class _NamedModel:
+    """返回固定文本的假模型：用来识别"这次回答到底是不是模型写的"。"""
+
+    def __init__(self, text: str):
+        self.text = text
+
+    def invoke(self, _prompt):
+        return AIMessage(content=self.text)
+
+
+def test_smalltalk_identity_never_goes_to_the_model(monkeypatch):
+    """即使开关打开，「你是谁」也**不**走模型——那句话是能力清单，不是措辞。
+
+    用"模型会吐一个可识别的句子"来判，而不是断 ``steps[0]["kind"]``：
+    ``_llm_smalltalk`` 失败时会回落模板，于是**任何**基于"有没有抛异常 / kind 是
+    什么"的断言都会在"真的误调了模型"时照样通过——那是一条没有牙齿的护栏。
+
+    ⚠️ 反向验证：把 ``identity`` 加进 ``_SMALLTALK_LLM_TEMPLATES``，本条必须变红。
+    """
+    from app.core import sub_agents
+
+    monkeypatch.setattr(config, "SMALLTALK_LLM_ENABLED", True)
+    monkeypatch.setattr(config, "USE_REAL_LLM", True)
+    monkeypatch.setattr(sub_agents, "default_model", lambda: _NamedModel("模型编的回复"))
+
+    answer = sub_agents.run_smalltalk_agent("你是谁")
+
+    assert "模型编的回复" not in answer.text, "身份询问被送去模型改写了"
+    assert "企业内部智能助手" in answer.text
+    assert answer.steps[0]["kind"] == "template"
+
+
+def test_smalltalk_low_risk_templates_do_use_the_model_when_enabled(monkeypatch):
+    """开关打开后，纯客套三类**确实**走了模型——否则前一条只是"开关没接上"。
+
+    两条测试必须成对：只证明"身份不走模型"，一个把开关整条拆掉的实现也能通过；
+    只证明"问候走了模型"，一个把身份也一起送进去的实现同样能通过。
+    """
+    from app.core import sub_agents
+
+    monkeypatch.setattr(config, "SMALLTALK_LLM_ENABLED", True)
+    monkeypatch.setattr(config, "USE_REAL_LLM", True)
+    monkeypatch.setattr(sub_agents, "default_model", lambda: _NamedModel("模型写的问候"))
+
+    answer = sub_agents.run_smalltalk_agent("你好")
+
+    assert answer.text == "模型写的问候"
+    assert answer.steps[0]["kind"] == "llm"
+
+
+def test_smalltalk_falls_back_to_template_when_the_model_is_unusable(monkeypatch):
+    """模型不可用 / 输出不合法 → 回落模板。闲聊**永远**答得出来。
+
+    这是开关能被接受的前提：模板直出永远可用，模型只是让措辞不那么固定；
+    把一次可选增益接成必需品，等于给闲聊路径引入一个它本来没有的失败点。
+    """
+    from app.core import sub_agents
+
+    monkeypatch.setattr(config, "SMALLTALK_LLM_ENABLED", True)
+    monkeypatch.setattr(config, "USE_REAL_LLM", True)
+
+    def boom():
+        raise RuntimeError("模型不可达")
+
+    monkeypatch.setattr(sub_agents, "default_model", boom)
+    assert "你好" in sub_agents.run_smalltalk_agent("你好").text
+
+    # 输出超长（模型开始"发挥"）同样回落——长度是"跑出既定定位"的代用信号。
+    monkeypatch.setattr(sub_agents, "default_model", lambda: _NamedModel("啰" * 200))
+    assert "你好" in sub_agents.run_smalltalk_agent("你好").text
 
 
 def test_smalltalk_does_not_call_the_model_even_offline(monkeypatch):
@@ -777,11 +929,11 @@ def test_degraded_rerouting_is_visible_in_the_topology():
 
 
 def test_tool_route_edge_priority_order():
-    """四分支的优先级：人工兜底 > 直答 > 改道 > 受控生成。"""
+    """四分支的优先级：人工兜底 > 直答 > 改道 > **交给证据校验复核**。"""
     assert tool_route_edge({"need_human": True, "answer": "x", "tool_degraded": True}) == "human_fallback"
     assert tool_route_edge({"answer": "追问", "tool_degraded": True}) == "end"
     assert tool_route_edge({"tool_degraded": True}) == SCENE_SIMPLE_RAG
-    assert tool_route_edge({}) == "generate_answer"
+    assert tool_route_edge({}) == "verifier"
     # 空字符串 ≠ 没有答案：模型说了一句话但内容是空的，那是一次需要被下游
     # 按无依据处理的异常，不是一条答案（用真值判断会把两者混成一种）。
     assert tool_route_edge({"answer": ""}) == "end"
@@ -856,12 +1008,349 @@ def test_full_and_pre_generation_graphs_share_every_node():
 
 
 def test_pre_generation_graph_reroutes_the_evidence_exit_to_end():
-    """两条链路唯一允许的差别：证据出口通向 ``END`` 而不是 ``generate_answer``。"""
-    assert _route_edges("simple_rag") == {"generate_answer"}
-    assert _route_edges("complex_rag") == {"generate_answer"}
-    assert _route_edges("simple_rag", pre_generation_workflow) == {"__end__"}
-    assert _route_edges("complex_rag", pre_generation_workflow) == {"__end__"}
-    assert "generate_answer" not in _route_edges("tool", pre_generation_workflow)
+    """    两条链路唯一允许的差别：**通过校验之后**通向 ``END`` 而不是
+    ``generate_answer``。``generation_target`` 因此只有**一个**消费方 ——
+    ``verifier_route_edge``。工具链路不直接消费它（它先被复核），这一点在
+    2026-09-24 被改错过一次，见 `test_the_tool_path_must_pass_the_verifier`。
+
+    注意三个证据出口（``simple_rag`` / ``complex_rag`` / ``tool``）两条链路
+    **都**通向 ``verifier``：算出来的证据在流式链路上同样可能答非所问，
+    校验不该只在非流式链路上存在。差别被推迟到了校验的出口。
+    """
+    assert _route_edges("simple_rag") == {"verifier"}
+    assert _route_edges("complex_rag") == {"verifier"}
+    assert _route_edges("simple_rag", pre_generation_workflow) == {"verifier"}
+    assert _route_edges("complex_rag", pre_generation_workflow) == {"verifier"}
+    assert _route_edges("verifier") == {"generate_answer", "router"}
+    assert _route_edges("verifier", pre_generation_workflow) == {"__end__", "router"}
+    # 工具链路：两个图都先经过 verifier（差别同样落在校验的出口）。
+    assert _route_edges("tool") == {
+        "__end__", "human_fallback", "simple_rag", "verifier"
+    }
+    assert _route_edges("tool", pre_generation_workflow) == {
+        "__end__", "human_fallback", "simple_rag", "verifier"
+    }
+
+
+def test_verifier_back_edge_is_bounded_by_the_retry_budget():
+    """``verifier → router`` 是图里**唯一**的回边，且必须有上界。
+
+    没有上界就是死循环：LangGraph 撞上递归上限会以异常收场，那不是"降级"，
+    是整轮失败。所以这里同时钉住三件事——回边存在（否则路由误判无人纠正）、
+    不判不符时**不**回退（否则每一轮都白绕一圈）、以及超预算后必须收敛到生成。
+    """
+    from app.graph.edges import verifier_route_edge
+
+    # 1. 回边存在
+    assert "router" in _route_edges("verifier")
+    # 2. 没判"不符"就不改道：None（没校验）与 True（校验通过）都直接生成
+    assert verifier_route_edge({}) == "generate_answer"
+    assert verifier_route_edge({"evidence_aligned": True}) == "generate_answer"
+    # 3. 判"不符"且还有预算 → 退回；预算用尽 → 收敛到生成（正常路径，非异常）
+    budget = config.ROUTE_RETRY_BUDGET
+    assert verifier_route_edge({"evidence_aligned": False, "reroute_count": 1}) == "router"
+    assert (
+        verifier_route_edge({"evidence_aligned": False, "reroute_count": budget + 1})
+        == "generate_answer"
+    )
+
+
+def test_reroute_budget_zero_means_verify_only(monkeypatch):
+    """``ROUTE_RETRY_BUDGET=0`` 时只校验、不改道——校验结论仅进观测。
+
+    这条守的是"关闭反馈通道"这个配置语义：关掉它不该顺带把校验也关掉
+    （那是两件事：``VERIFIER_MODE`` 管校验做不做，预算管发现不符后改不改道）。
+    """
+    from app.graph.edges import verifier_route_edge
+
+    assert verifier_route_edge({"evidence_aligned": False, "reroute_count": 1}) == "router"
+
+    monkeypatch.setattr(config, "ROUTE_RETRY_BUDGET", 0)
+    assert (
+        verifier_route_edge({"evidence_aligned": False, "reroute_count": 1})
+        == "generate_answer"
+    )
+
+
+# ===========================================================================
+# 证据校验的触发判据 —— 它是**修复手段**，不是每轮都走的常规工序
+#
+# 这一组守的主张是"没理由怀疑时不许花钱"。它的失效是**不会报错**的那一类：
+# 判据写漏了，校验照常返回"对齐"，功能测试全绿，只是每一轮都白付 1~3 秒。
+# 所以下面的断言全部看 ``source``（有没有真的调用模型），而不是只看结论 ——
+# 只看结论的话，"误调了模型、模型恰好答对齐"与"正确地跳过"完全同形。
+# ===========================================================================
+def _clean_docs():
+    """一次正常检索的产物：没有任何"这批证据是凑的"的标记。"""
+    return [{"content": "年休假为 5 天", "source": "员工手册.md", "fallback": False}]
+
+
+def test_verifier_auto_skips_a_healthy_turn_without_calling_the_model(monkeypatch):
+    """默认（auto）下，规则路由 + 正常检索 → **一次模型调用都不发**。
+
+    这就是本机制存在的理由：线上 20 次采样里校验 0 次判出不符，却稳定占掉
+    首 token 路径上 1.2~3.0 秒。
+
+    ⚠️ 反向验证：把 ``should_verify`` 的最后一条判据改回
+    "``route_gray_reason`` 非空即触发"，本条必须变红。
+    """
+    from app.core import verifier
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "auto")
+    result = verifier.verify_evidence(
+        "年假有多少天",
+        docs=_clean_docs(),
+        route_gray_reason="",
+        model=_NamedModel("ALIGNED\n"),
+    )
+
+    assert result.source == verifier.SOURCE_SKIPPED, "健康的一轮不该调用校验模型"
+    assert result.trigger == verifier.TRIGGER_NOT_NEEDED
+    assert result.aligned is None
+
+
+def test_verifier_only_treats_a_wobbling_route_as_suspicion(monkeypatch):
+    """漏斗"没判"不等于"判不准"：只有 ``tight_margin`` 触发复核。
+
+    这是本机制省不省钱的分水岭。漏斗的灰区原因分四类，只有 ``tight_margin``
+    （顶两名咬得很紧）说明**这次判定本身不稳**；``low_floor`` / ``no_candidate``
+    只说明这句话与例句不像——模型路由读能力描述本来就擅长这类，不该为它多花
+    一次 1.2~3.0 秒的校验。
+
+    实测（27 条正常提问）：漏斗只有 4 条被本地采信，其余 23 条里 ``low_floor``
+    22 条、``no_candidate`` 1 条、``tight_margin`` **0 条**。若按"只要不是本地
+    快通道拍的板就复核"，会有 85% 的正常轮次被拉回来，等于没做按需。
+
+    ⚠️ 反向验证：把 ``should_verify`` 的最后一条判据改成
+    ``if route_gray_reason:``，本条必须变红（前两个参数化用例会去调模型）。
+    """
+    from app.core import verifier
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "auto")
+    model = _NamedModel("ALIGNED\n")
+
+    for gray in ("low_floor", "no_candidate", "budget_exceeded"):
+        skipped = verifier.verify_evidence(
+            "年假有多少天", docs=_clean_docs(), route_gray_reason=gray, model=model
+        )
+        assert skipped.source == verifier.SOURCE_SKIPPED, f"{gray} 不该触发复核"
+        assert skipped.aligned is None
+
+    fired = verifier.verify_evidence(
+        "年假有多少天",
+        docs=_clean_docs(),
+        route_gray_reason="tight_margin",
+        model=model,
+    )
+    assert fired.trigger == TRIGGER_TIGHT_ROUTE
+    assert fired.source == verifier.SOURCE_MODEL, "摇摆的一轮没有真的查"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "trigger"),
+    [
+        ({"soft_warnings": ["检索失败已降级：TimeoutError"]}, TRIGGER_DEGRADED),
+        ({"docs": [{"content": "x", "source": "a.md", "fallback": True}]}, TRIGGER_WEAK_EVIDENCE),
+        ({"route_gray_reason": "tight_margin"}, TRIGGER_TIGHT_ROUTE),
+    ],
+)
+def test_verifier_auto_fires_on_every_kind_of_suspicion(monkeypatch, overrides, trigger):
+    """三条"值得查"的迹象各自都能**单独**触发，且都会真的调用模型。
+
+    每一条都对应一种"这一轮确实可能有问题"的实证，而不是猜测：本轮发生了可降级
+    故障（链路自己已经报了"质量已下降"——含工具不可用**而改道简单 RAG** 那一轮，
+    那一次的证据是检索来的、带着退而求其次的背景）；证据含软回退片段（检索自己
+    说了这批是硬凑的）；路由在通道间咬得很紧（判定本身就不稳）。
+
+    少任何一条，对应的那类问题就会静默漏过去 —— 而漏过去的表现是"回答照常
+    产出、只是错的"，不会有任何报错。
+
+    注意这里**没有**"工具链路"这一条：它不是一条"迹象"，而是**代理信号**
+    （判据和风险不是同一件事），已删除。从今往后工具轮走的是上面这几条同一套判据
+    —— 干净的轮次零代价跳过，出过状况的轮次被复核。见
+    `test_the_tool_path_must_pass_the_verifier`。
+    """
+    from app.core import verifier
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "auto")
+    payload = {"docs": _clean_docs(), "route_gray_reason": "", **overrides}
+    result = verifier.verify_evidence(
+        "年假有多少天", model=_NamedModel("ALIGNED\n"), **payload
+    )
+
+    assert result.trigger == trigger
+    assert result.source == verifier.SOURCE_MODEL, "该查的一轮没有真的查"
+    assert result.aligned is True
+
+
+def test_the_tool_path_must_pass_the_verifier():
+    """**工具链路必须经过 verifier**，且 ``tool_result`` 必须传得进去。
+
+    这条边在 2026-09-24 走过三段，整套钉在这里 —— 它是个**方向性错误**的标本：
+
+    ① ``if tool_result:``（"走了工具链路就复核"）是**代理信号**：工具结果是自己
+       库里的一行结构化记录，不存在让检索偏掉的机制（片段被切碎 / Top1 分不达标 /
+       多路融合选错）。代价是每轮工具请求白付一次复核 —— ``verifier_node`` 中位
+       **1551ms**、占整轮 17%~25%，而 54 次判定 MISMATCH = 0。
+    ② 把判据删掉**顺手把这条边也摘了**——过度治疗。删判据解决的是"每轮都付"，
+       边解决的是"**出问题时有没有人复核**"，两件事被一起丢了：工具侧真正可疑的
+       信号（调用被护栏拒绝 / 执行抛异常 / 正文回捞）照旧进 ``soft_warnings``
+       + trace + 前端面板，却**再也没有复核环节**。*留痕不等于兜底*。
+    ③ 现在：边接回来，判据保持按需（那 1551ms 不会重现，干净轮次零代价跳过）。
+
+    所以断言分两层，**缺一条这条边就是白接的**：
+
+    - **拓扑层**：``tool`` 的路由目标里有 ``verifier``（两个图都要有 —— 流式链路
+      取回的证据同样会被推给用户）；
+    - **接口层**：``verify_evidence`` / ``should_verify`` **必须收** ``tool_result``。
+      工具链路的 ``docs`` 恒为空，证据**全在** ``tool_result`` 里；不传，判据会在
+      "没有证据可校验"那一条上短路，复核永远不会发生 —— 而症状与"干净轮次跳过"
+      **完全同形**，不会有任何报错。
+
+    ⚠️ 反向验证：把 ``tool_route_edge`` 的返回值改回 ``"generate_answer"``，
+    第一条断言必须变红；把 ``verify_evidence`` 的 ``tool_result`` 入参删掉，
+    第三条断言必须变红。
+    """
+    from app.core import verifier
+
+    assert _route_edges("tool") == {
+        "__end__", "human_fallback", "simple_rag", "verifier"
+    }
+    assert "verifier" in _route_edges("tool"), "工具链路脱离了证据校验（兜底没了）"
+    assert "verifier" in _route_edges("tool", pre_generation_workflow)
+
+    assert "tool_result" in inspect.signature(verifier.verify_evidence).parameters
+    assert "tool_result" in inspect.signature(verifier.should_verify).parameters
+
+
+def test_a_tool_turn_with_only_tool_result_is_actually_verifiable(monkeypatch):
+    """``tool_result`` 单独一人也要能被判为"有证据"。
+
+    这是上一条的**行为侧**护栏：拓扑接回了边、入参也在了，但如果判空只认
+    ``retrieve_docs``，工具轮仍会静默跳过复核 —— ``needed=False``、
+    ``aligned=None``、``source=verifier:skipped``，全都"看起来正常"。
+    所以这里不查形状查行为：只有 ``tool_result``、没有任何 ``docs``，
+    必须真的调用模型并给出判定。
+    """
+    from app.core import verifier
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "auto")
+
+    # 干净的证据（无软回退）也没有任何告警 —— 不传 tool_result 时下面会跳过。
+    skipped = verifier.should_verify(docs=[], tool_result=None)
+    assert skipped.needed is False
+    assert skipped.trigger == verifier.TRIGGER_NOT_NEEDED
+    assert skipped.detail == "没有证据可校验"
+
+    # 同样的状态，只多了 tool_result（且 soft_warnings 非空 = 本轮出过状况）：
+    # 证据存在 + 有可疑迹象 → 必须动手。
+    fired = verifier.verify_evidence(
+        "李四的部门是什么",
+        docs=[],
+        tool_result='{"ok": true, "annual_leave_days": 3}',
+        soft_warnings=["工具 annual_leave 调用被来源白名单拒绝"],
+        model=_NamedModel("MISMATCH\n参数对不上，查的是年假不是部门"),
+    )
+    assert fired.source == verifier.SOURCE_MODEL, "工具轮没有真的查（边白接了）"
+    assert fired.trigger == verifier.TRIGGER_DEGRADED
+    assert fired.aligned is False
+
+
+def test_verifier_off_is_distinguishable_from_auto_skipping(monkeypatch):
+    """``off`` 是"这个机制不存在"，与 auto 的"查了、没有可疑迹象"必须能分开。
+
+    合成一个的话，"关掉校验"会伪装成"证据都没问题"——排障时看不出区别，
+    也就没人会发现它其实一直是关的。
+    """
+    from app.core import verifier
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "off")
+    result = verifier.verify_evidence(
+        "年假有多少天",
+        docs=_clean_docs(),
+        route_gray_reason="tight_margin",
+        model=_NamedModel("ALIGNED\n"),
+    )
+
+    assert result.trigger == verifier.TRIGGER_DISABLED
+    assert result.source == verifier.SOURCE_SKIPPED
+    assert result.aligned is None
+
+
+def test_verifier_always_keeps_the_every_turn_behaviour(monkeypatch):
+    """``always`` 是回退路径：``auto`` 万一漏判，改一个值就能切回"每轮都查"。"""
+    from app.core import verifier
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "always")
+    result = verifier.verify_evidence(
+        "年假有多少天",
+        docs=_clean_docs(),
+        model=_NamedModel("ALIGNED\n"),
+    )
+
+    assert result.trigger == verifier.TRIGGER_ALWAYS
+    assert result.source == verifier.SOURCE_MODEL
+
+
+def test_verifier_still_skips_when_there_is_nothing_to_check(monkeypatch):
+    """没有证据时"是否对齐"这个问题不成立——开成 ``always`` 也变不出证据来。"""
+    from app.core import verifier
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "always")
+    result = verifier.verify_evidence(
+        "年假有多少天", docs=[], route_gray_reason="tight_margin",
+        model=_NamedModel("MISMATCH\n"),
+    )
+
+    assert result.source == verifier.SOURCE_SKIPPED
+    assert result.aligned is None
+
+
+def test_verifier_unknown_mode_falls_back_instead_of_crashing(monkeypatch):
+    """``VERIFIER_MODE`` 写错时降级到默认值，而不是把整轮回答拖垮。"""
+    from app.core import verifier
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "banana")
+    result = verifier.verify_evidence(
+        "年假有多少天",
+        docs=_clean_docs(),
+        model=_NamedModel("ALIGNED\n"),
+    )
+
+    # 与默认值 auto 一致：健康的一轮照常跳过
+    assert result.source == verifier.SOURCE_SKIPPED
+
+
+def test_verifier_node_records_a_skip_as_not_checked(monkeypatch):
+    """跳过必须如实写 ``None`` 与「未做校验」，且**不进 soft_warnings**。
+
+    第一件事：写 ``True`` 会让"我们没查"与"查过、没问题"在观测上完全同形 ——
+    前端面板把一个大面积跳过的链路显示成"全部对齐"，而实际上这件事本轮没人管。
+    节点里那句 ``'对齐' if aligned else '不符'`` 有同一个毛病（``None`` 是假的，
+    会被说成"证据不符"，比不写更糟）。
+
+    第二件事：按需跳过是本轮的**正常结论**，不是"该做没做成"的降级。混进
+    ``soft_warnings`` 之后，"今天有多少轮没人校验"就再也算不清了。
+
+    ⚠️ 反向验证：把 ``VerifyResult.aligned`` 的默认值改回 ``True``，本条必须变红。
+    """
+    from app.graph.nodes import verifier_node
+
+    monkeypatch.setattr(config, "VERIFIER_MODE", "auto")
+    out = verifier_node(
+        {
+            "user_query": "年假有多少天",
+            "retrieve_docs": _clean_docs(),
+            "tool_result": None,
+            "scene_source": "router:local",
+        }
+    )
+
+    assert out["evidence_aligned"] is None
+    assert out["verify_source"] == "verifier:skipped"
+    assert out["route_decision"]["verify_trigger"] == "not_needed"
+    assert "未做校验" in out["trace"][-1]["detail"]
+    assert not out.get("soft_warnings")
 
 
 def test_scene_route_edge_falls_back_for_an_unknown_scene():

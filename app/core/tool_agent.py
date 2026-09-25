@@ -252,6 +252,103 @@ def parse_text_tool_calls(content: str) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# 「计划词」——用模型自己的计划，省掉一整轮决策
+# ---------------------------------------------------------------------------
+# 问题（2026-09-24 实测，14 条真实链路 + 真实模型复现）
+# --------------------------------------------------
+# 工具 Agent 跑两轮。第 2 轮里有一部分并不是"链式调用的第二跳"，而只是
+# "模型看过结果，回一句『够了』"——**而它在同一句话里已经把答案写出来了**，
+# 随后被 L4 覆盖重写。真实链路里这个形状占 4/14；真实模型逐条复现时，
+# 「E1001 的年假还剩几天」「张三的部门是什么」两问的第 2 轮正文就分别是
+# 「剩余年假 5.0 天，剩余调休 2.0 天」「张三的部门是技术部」——**答案已经在手里，
+# 却被丢掉再生成一遍**。
+#
+# 为什么不能本地算出来「这一轮够不够」
+# ------------------------------------
+# 从工具结果反推"够不够回答用户问的那件事"需要语义比对，本地不是能不能写的问题，
+# 而是写出来必定是又一份与模型抢活的规则。所以反过来：**让模型在出发前声明计划。**
+#
+# 这与"让模型判断自己的证据对不对"是两件事，别混：后者是**循环论证**
+# （看不出错才会答错，见 verifier 的说明）；前者是**声明意图**——模型当然知道
+# 自己打算查一步还是两步，这个判断不需要看到结果。
+#
+# 实测（真实端点，7 条问句 × 2 次，计划词 100% 命中且两次完全一致）
+# ---------------------------------------------------------------
+#   问句                          计划词        该做的
+#   E1001 的年假还剩几天           PLAN_DONE     一次够          ← 省一轮
+#   张三的部门是什么               PLAN_DONE     一次够（find 已含部门）← 省一轮
+#   张三的年假还剩几天             PLAN_MORE     需要解析工号
+#   李四是什么时候入职的           PLAN_MORE     需要解析工号
+#   王五的直属领导是谁             PLAN_MORE     重名，需追问
+#   王五的部门是什么               PLAN_DONE     但结果 ambiguous=true → 守卫拦下
+#
+# 唯一那次判断偏差（重名那条）**被本地守卫救回**：结果不干净时不信 PLAN_DONE。
+#
+# ⚠️ 顺带证伪了一条更激进的方案：让模型一轮发出整条链、第二跳参数写占位符
+#     `{{0.employee_id}}`。实测模型**根本不写占位符**，而且那段说明会干扰计划词
+#     （把"入职时间"误判成 PLAN_DONE）。不做。
+PLAN_DONE = "PLAN_DONE"
+PLAN_MORE = "PLAN_MORE"
+_PLAN_TOKENS = (PLAN_DONE, PLAN_MORE)
+
+
+def _parse_plan(content: str) -> Optional[str]:
+    """从正文里取出计划词；取不到返回 ``None``。
+
+    只看**第一个非空行**，且必须是两个词之一打头。刻意不做模糊匹配：
+    认不出来就按"没声明"处理，退回原有两轮路径——**默认保守**。
+    """
+    for line in (content or "").splitlines():
+        token = line.strip().strip("`*_ ").upper()
+        if not token:
+            continue
+        for plan in _PLAN_TOKENS:
+            if token.startswith(plan):
+                return plan
+        return None
+    return None
+
+
+def _strip_plan_token(content: str) -> str:
+    """把正文里的计划词去掉，返回剩下的部分。
+
+    计划词是**给机器看的**，不该出现在任何面向用户的文本里。直答出口会把
+    ``content`` 原样交给用户，所以那条路径必须先过一遍这个函数。
+
+    整段正文**只有**计划词时保留原文：宁可让用户看到一行怪字符串，也不要把
+    回答静默变成空串——后者会和"模型什么都没说"在观测上同形。
+    """
+    lines = (content or "").splitlines()
+    for idx, line in enumerate(lines):
+        token = line.strip().strip("`*_ ").upper()
+        if not token:
+            continue
+        if any(token.startswith(plan) for plan in _PLAN_TOKENS):
+            rest = "\n".join(lines[idx + 1:]).strip()
+            return rest or (content or "").strip()
+        return (content or "").strip()
+    return (content or "").strip()
+
+
+def _payload_is_usable(raw: Any) -> bool:
+    """工具返回的这份数据，**能不能拿去回答**。本判据的唯一产生点。
+
+    两条都要满足：``ok`` 为真，且**不是重名歧义**。歧义时工具给的是"候选人列表"，
+    需要的是向用户追问，不是拿去作答——把候选人当成答案写出去，等于替用户挑了一个。
+
+    解析不出来一律按**不可用**处理：这是"要不要少花一轮"的判据，拿不准就不省。
+    """
+    try:
+        payload = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        return False
+    data = payload.get("data")
+    return not (isinstance(data, dict) and data.get("ambiguous") is True)
+
+
+# ---------------------------------------------------------------------------
 # 结果对象
 # ---------------------------------------------------------------------------
 @dataclass
@@ -264,11 +361,22 @@ class ToolStep:
     status: str = "ok"          # ok | rejected | error
     detail: str = ""
     elapsed_ms: int = 0
+    #: 这次调用拿回来的数据**能不能拿去回答**（``_payload_is_usable``）。
+    #:
+    #: 它与 ``status`` 是两件事，不能合并：``status == "ok"`` 只说明"工具跑通了"，
+    #: 而 ``{"ok": false, "error": "not_found"}``（查无此人）与
+    #: ``{"ok": true, "data": {"ambiguous": true, ...}}``（重名，给的是候选人列表）
+    #: 都会记成 ``ok``，却都不是能直接作答的数据。
+    #:
+    #: 默认 ``False``：**拿不准就不算可用**。这个字段只用来做"要不要少花一轮"的
+    #: 判断，保守的默认值等于"不省"，与旧行为一致。
+    usable: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "index": self.index, "tool": self.tool, "status": self.status,
             "detail": self.detail, "elapsed_ms": self.elapsed_ms,
+            "usable": self.usable,
         }
 
 
@@ -310,6 +418,12 @@ class ToolDecision:
     tool_results: List[str] = field(default_factory=list)
     #: 工具**内部**吞掉的可降级故障。与 ``docs`` 同理显式带出。
     soft_warnings: List[str] = field(default_factory=list)
+    #: 是否因为模型声明「一次调用就够」而**省掉了后面那轮决策**。
+    #:
+    #: 这个值必须能被观测：省掉的那一轮是一次真实的模型往返（1.8~2.9s），
+    #: 不看它就没法判断"省了多少"与"省错了几次"。写进 ``tool`` span 的
+    #: ``plan_shortcut``，与 ``discarded_chars`` 是同一类埋点。
+    plan_shortcut: bool = False
 
     @property
     def is_direct(self) -> bool:
@@ -326,6 +440,7 @@ class ToolDecision:
             "degraded": self.degraded,
             "recovered_calls": self.recovered_calls,
             "used_tools": list(self.used_tools),
+            "plan_shortcut": self.plan_shortcut,
             "steps": [s.to_dict() for s in self.steps],
         }
 
@@ -486,6 +601,8 @@ def execute_tool_calls(
         # （旧实现里 search_knowledge 也在这个列表里，它的产物已以**片段**形式
         # 进证据集，再记一遍会让 L4 上下文里同一段内容出现两次。）
         if step.status == "ok":
+            # 跑通 ≠ 可用：查无此人（ok=false）与重名（ambiguous）都会走到这里。
+            step.usable = _payload_is_usable(content)
             add_tool_result(str(content))
 
         results.append((step, _tool_message(call, str(content))))
@@ -541,8 +658,8 @@ def run_tool_agent(
     查询成功，生成层却拿到 0 条数据并拒答」。提前在调用方 context 里建好，
     工具拿到的就是同一个对象引用，就地修改两边都可见。
 
-    关于 ``max_steps``（默认 2）
-    --------------------------
+    关于 ``max_steps``（默认 2）——为什么是"两轮"，以及第 2 轮到底在干什么
+    ---------------------------------------------------------------------
     ``TOOL_AGENT_MAX_STEPS`` 默认 2，用于覆盖规格要求的三种情形：
     ① 一次信息收集（可并行发多个调用）；② 链式调用（先 ``find_employee_by_name``
     拿到工号，再 ``query_leave_balance``）；③ 参数不合 schema 被拒绝后
@@ -552,7 +669,28 @@ def run_tool_agent(
     上一轮的工具结果后再决定；一旦它不再发出工具调用，本轮立即收口。而
     **已取到证据时那一轮的文本会被 L4 覆盖**（最终答案必须由受控生成产出、
     带引用编号），它唯一的产出只是"没有更多调用"这个消息，却要付一次完整的
-    模型调用（实测 1.2~2.4s）。统计 54 条真实工具链路，需要第 3 轮工具调用的为 0。
+    模型调用（实测 1.2~2.9s）。统计真实工具链路，需要第 3 轮工具调用的为 0。
+
+    第 2 轮的真实形态（2026-09-24 离线核对全部含 ``agent_step_*`` 的真实链路）
+    ---------------------------------------------------------------------------
+    此前本段把第 2 轮描述成"确认轮"，那**只对其中一部分链路成立**。按埋点实际
+    分布，14 条真实工具链路里：
+
+    - 第 1 轮**全部**只发 1 个调用（``attrs.tool_calls == 1``），且**全部**是
+      ``find_employee_by_name`` —— 即"姓名 → 工号"这一跳解析。这是工具设计的
+      必然：另外两个工具都只收 ``employee_id``，没有它就无法开始。
+    - 第 2 轮有 **10 条**发出的是**真正的第二跳**（``query_employee_info`` /
+      ``query_leave_balance``），只有 **4 条**是收口（``tool_calls == 0``）。
+    - 两种形状的耗时也不同：``steps=1``（1 跳 + 收口）的 tool 阶段中位 6417ms，
+      ``steps=2``（2 跳）中位 3915ms。**收口那一轮并不便宜**——它要生成一段
+      注定被丢弃的正文（``discarded_chars`` 52 / 71 / 99 字），中位比只发调用的
+      那一轮还高。
+
+    结论因此要改写：**"两轮"不是冗余，而是链式调用的结构性下限**。要在两跳之间
+    做取舍，模型必须先看见第一跳的结果，这一轮往返省不掉；能省的只有"结果里已经
+    有答案时还要再查一遍"那种**多余的第三跳**（受 ``max_steps`` 封顶，且已由
+    提示词第 2 条要求"够了就不再调用工具"）。要再往下压一轮，只能改结构
+    （计划式链式调用 / 本地充分性判据），那不是提示词能解决的事。
     """
     try:
         decision = _decide(query, chat_history, memory_context, model, max_steps)
@@ -592,6 +730,9 @@ def _decide(
     messages = build_messages(query, chat_history, memory_context)
 
     for round_index in range(max(1, steps_limit)):
+        # 本轮模型自己声明的计划（``PLAN_DONE`` / ``PLAN_MORE``）；认不出来就是
+        # ``None``——**默认保守**，照旧走下一轮，与这个机制不存在时行为一致。
+        plan: Optional[str] = None
         with span(f"agent_step_{round_index}") as s:
             reply = bound.invoke(messages)
             calls = list(getattr(reply, "tool_calls", None) or [])
@@ -634,12 +775,23 @@ def _decide(
             #     剩下 ~3.6s 是这一轮的模型往返本身。所以「让模型别写」最多省 0.5s、
             #     且省不掉这一轮 —— 真正的浪费是**这一轮该不该发生**。
             #     别再往提示词里加同义句，那对付不了它（实测无效）。
+            #
+            # ⚠️ 2026-09-24 更正：这个观测点只覆盖**收口形状**的链路。按埋点全员核对，
+            #     14 条真实工具链路里只有 4 条会走到这里；另外 10 条的"第 2 轮"是真的
+            #     在发第二跳（姓名→工号之后按工号取字段），那一轮是结构性必需的，
+            #     不是浪费。别再拿 `discarded_chars` 的条数去推断"第 2 轮该不该有"。
             if not calls and decision.used_tools:
                 s.attrs["discarded_chars"] = len(content)
+            # 计划词只在**真的要发工具调用**时才算数：没有调用就没有"这一次够不够"
+            # 这个问题，而正文此时是给用户看的答案（直答出口），不能当计划读。
+            if calls:
+                plan = _parse_plan(content)
+                s.attrs["plan"] = plan or ""
             logger.info(
-                "Agent 第 %d 轮决策：tool_calls=%d（%s）",
+                "Agent 第 %d 轮决策：tool_calls=%d（%s）%s",
                 round_index + 1, len(calls),
                 ",".join(c.get("name", "?") for c in calls) or "无",
+                f" plan={plan}" if plan else "",
             )
 
         if not calls:
@@ -659,10 +811,13 @@ def _decide(
                 # （「必填参数缺失时，模型主动向用户追问」）正面冲突。
                 # 提过 ≠ 拿到：只有 `used_tools` 非空才说明证据在手，
                 # 那时才该把成文权交回 L4（引用编号、置信度、拒答只在 L4 产生）。
-                decision.direct_answer = content
+                #
+                # 过一遍 `_strip_plan_token`：模型可能在正文开头带了计划词
+                # （约定上它只在调工具时写，但直答路径不该把那个词给用户看）。
+                decision.direct_answer = _strip_plan_token(content)
                 logger.info(
                     "Agent 直答 %d 字（本轮未取到业务证据：提出过 %d 次调用）",
-                    len(content or ""), len(decision.steps),
+                    len(decision.direct_answer or ""), len(decision.steps),
                 )
             else:
                 # 已收集过证据、模型主动收口 → 交回 L4 生成带引用的答案。
@@ -683,8 +838,42 @@ def _decide(
         executed = execute_tool_calls(calls, query, start_index=len(decision.steps))
         for step, message in executed:
             decision.steps.append(step)
+            # 注意 `used_tools` 的判据仍然是 `status == "ok"`（工具**跑通**了），
+            # 而不是 `usable`：查无此人（ok=false）也算"提过并执行过"，此时把成文权
+            # 交回 L4 让它说"没查到"是对的行为，改成 `usable` 会把一句"没查到"
+            # 变成模型的自由发挥。两者的区别见 `ToolStep.usable`。
             if step.status == "ok":
                 decision.used_tools.append(step.tool)
+
+        # 「一次调用就够」→ 后面那轮决策**整个省掉**（见 `PLAN_DONE` 的说明）。
+        #
+        # 四道同时满足才省，缺任何一道都照旧走下一轮：
+        #   ① 开关打开；
+        #   ② 模型声明 PLAN_DONE（认不出来就不算）；
+        #   ③ **后面确实还有一轮可省**——最后一轮本来就要退出，谈不上省；
+        #   ④ 本轮每个调用都取到了**可用数据**（`usable`：ok=true 且非重名歧义）。
+        #
+        # ④ 是安全底线，也是实测里唯一救回判断偏差的那一道：真实模型对
+        # 「王五的部门是什么」也吐了 PLAN_DONE，但工具返回 ambiguous=true，
+        # 该做的是追问是哪一位——此时不能省，必须让模型看到候选人。
+        #
+        # 省错的代价要说清楚：模型若"自认为一次够、实际不够"，用户拿到的是
+        # L4 的"资料不足"，**是诚实拒答而不是错答**；且退路是现成的
+        # （`TOOL_AGENT_PLAN_SHORTCUT=false` 回到旧行为）。
+        if (
+            config.TOOL_AGENT_PLAN_SHORTCUT
+            and plan == PLAN_DONE
+            and round_index < steps_limit - 1
+            and executed
+            and all(step.usable for step, _ in executed)
+        ):
+            decision.plan_shortcut = True
+            logger.info(
+                "Agent 第 %d 轮声明 PLAN_DONE 且本轮数据可用，省掉后续决策轮（工具 %s）",
+                round_index + 1, ",".join(step.tool for step, _ in executed),
+            )
+            return decision
+
         # 对话结构必须完整：assistant 的 tool_calls 与随后的 tool 消息成对出现。
         # 少一条，下一次 invoke 会被接口以 400 拒绝。
         messages.append(reply)

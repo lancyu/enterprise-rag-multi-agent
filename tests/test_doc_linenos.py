@@ -39,10 +39,25 @@ from typing import Callable, List
 
 import pytest
 
-from verify_doc_linenos import DEFAULT_DOC, verify
+import fix_doc_linenos
+from verify_doc_linenos import DEFAULT_DOC, collect_symbols, verify
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 _DOC = ROOT / DEFAULT_DOC
+
+
+def _real_span(rel: str, name: str) -> str:
+    """``rel``（如 ``app/graph/workflow_graph.py``）里 ``name`` 的真实跨度 ``"A-B"``。
+
+    为什么不写死数字：本条用例原本把 `_wire` 的跨度写成 134-218，
+    `workflow_graph.py` 整体下移 6 行之后，它就变成"**用例自己过期**"——
+    而它守的正是行号漂移，最不该由它来制造噪音。
+    取法与校验器完全一致（同一个 `collect_symbols`），所以不会出现"两边各算一套"。
+    """
+    symbols, _ = collect_symbols(str(ROOT / "app"))
+    spans = sorted(set(symbols.get(str(ROOT / rel), {}).get(name) or ()))
+    assert len(spans) == 1, f"{rel} 里 {name} 的跨度不唯一：{spans}"
+    return f"{spans[0][0]}-{spans[0][1]}"
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +356,45 @@ def test_class14_does_not_fire_on_a_suffix_fragment(mini_doc):
     assert mini_doc("| 说明 | 以 `_route_edge` 结尾的名字必须真实存在 |") == []
 
 
+def test_class15_a_stale_function_level_range_is_reported(problems):
+    """第 15 类：**函数级区间** —— 反引号里带括号、或夹着说明文字的那种。
+
+    第 12 类只认 `` `名字`（A-B）`` 这一个形状，于是
+    `` `_wire(graph, generation_target=...)`（134-218）`` 这类写法谁都不管。
+    实测（2026-09-24）：`workflow_graph.py` 整体下移后，这一类一次漂了 5 处，
+    而校验器连报三轮「701 条全部一致」。
+    """
+    # 锚点里不含数字，避免 workflow_graph.py 一变就被判成"载体变了"。
+    # 锚点用 `conditional_branch_count` 而不是本文里那份表格也举了例的 `_wire`——
+    # 第 15 类的示例行本身也是本类的校验对象，拿它当锚点会撞成两处（载体非唯一）。
+    _assert_reported(problems(_bump("`conditional_branch_count()`（", 0)), "`conditional_branch_count`")
+
+
+def test_class15_a_correct_function_level_range_is_accepted(mini_doc):
+    """反向：区间正确时不能报。
+
+    两种写法各来一条：带参数的（第 12 类认不出）与带空括号的。
+
+    跨度**从源码现取**（见 `_real_span`），刻意不写死：写死过一次，
+    代码一下移这条用例就自己过期了 —— 而它守的正是行号漂移。
+    """
+    wire = _real_span("app/graph/workflow_graph.py", "_wire")
+    branch = _real_span("app/graph/workflow_graph.py", "conditional_branch_count")
+    assert mini_doc(f"| 装配 | `_wire(graph, generation_target=...)`（{wire}） | 双图同源 |") == []
+    assert mini_doc(f"| 计数 | `conditional_branch_count()`（{branch}） | 不数边 |") == []
+
+
+def test_class15_does_not_fire_on_a_value_range(mini_doc):
+    """反向：`` `confidence`（0~1）`` 是**值域**，不是行号 —— 不能报。
+
+    这条来自实测：`docs/multi-agent-architecture.md` 里写着「`confidence` 是模型的
+    自评（0~1）」，而 `confidence` 恰好也是 `state.py` 的字段名，于是本类刚上线时
+    把它报成了「`confidence` 文档写 0-1，AST 实为 …」。**判据越依赖名字，越要留出
+    "这个词在这里只是普通名词"的余地**——行号是 1 基的，起点为 0 的一律不认。
+    """
+    assert mini_doc("| 置信度 | `confidence`（0~1） | 只用于观测 |") == []
+
+
 # ---------------------------------------------------------------------------
 # 3. 它也必须克制（该绿的要绿）
 # ---------------------------------------------------------------------------
@@ -362,3 +416,58 @@ def test_mutation_helper_refuses_to_run_when_its_anchor_is_gone():
     """
     with pytest.raises(AssertionError, match="出现 0 次"):
         _bump("这个锚点在文档里绝对不存在")(_DOC.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# 4. 修复器也得守（2026-09-24 补）
+# ---------------------------------------------------------------------------
+# 前三节守的是**校验器**（报得对不对）。但门禁的实际用法是「红了就跑
+# `fix_doc_linenos.py --write`」——修复器修不动，人就只能手工回填十几处，
+# 而手工回填正是"改错一位看不出来"的场景。实测就是这么发生的：
+# 校验器的第 12/15 类新报文只报"哪里不对"、不给正确值，修复器一条都解析不出，
+# 一次重构积了 14 处手工活。下面两条把"这类必须能自动修"钉住。
+def test_fixer_repairs_a_function_level_range_end_to_end(doc_copy):
+    """真文档 → 施加一处漂移 → 修复器修回 → 再校验必须全绿。
+
+    选**函数级区间**（第 15 类）：它正是当初修复器修不了的那一类
+    （校验器报"`name` 文档写 A-B，AST 实为 file:S-E"，修复器解析不出这个形状）。
+    """
+    broken = doc_copy(_bump("`conditional_branch_count()`（", 0))
+    assert verify(str(broken)), "变异没生效 —— 这条用例已经失去意义"
+
+    fixes, manual = fix_doc_linenos.plan(str(broken))
+    assert manual == [], f"这类漂移应当能自动修，却报成需人工处理：{manual}"
+
+    fixed, rejected = fix_doc_linenos.apply_fixes(
+        broken.read_text(encoding="utf-8").splitlines(), fixes
+    )
+    assert rejected == [], f"修复项被拒绝：{rejected}"
+    broken.write_text("\n".join(fixed) + "\n", encoding="utf-8")
+    assert verify(str(broken)) == [], "修复器写回之后仍然不一致"
+
+
+def test_fixer_anchor_is_not_swallowed_by_a_longer_symbol_name():
+    """两个名字有前缀关系时，锚点必须落在**自己**那一段上。
+
+    实测（2026-09-24）：修 `DOCSTORE_STRATEGY` 那处时，锚点先命中了
+    `DOCSTORE_STRATEGY_CHOICES` 里的那一段（前缀吞并），"离锚点最近"
+    于是变成"离另一个符号最近"——把同一行上两个数字**换错了位**，
+    原本只错一处变成错两处。校验器当场逮住，但修复器必须先对。
+    """
+    line = "| 528-556 | 增量索引（`DOCSTORE_STRATEGY_CHOICES` 535 / `DOCSTORE_STRATEGY` 538） |"
+    at = fix_doc_linenos._find_anchor(line, "DOCSTORE_STRATEGY")
+    assert at == line.rindex("`DOCSTORE_STRATEGY`") + 1, "锚点被更长的名字吞并了"
+
+
+def test_fixer_uses_the_anchor_to_break_a_number_collision():
+    """同一行两个数字相同时，靠锚点挑对那一个。
+
+    真文档里就有这种行：`VERIFIER_MODE_CHOICES` 与 `ROUTE_RETRY_BUDGET` 的
+    行号都是 193，而只有前者需要改。挑错就会把没问题的那个改坏。
+    """
+    line = "| 173-214 | 证据校验 —— `VERIFIER_MODE_CHOICES` 193 / `ROUTE_RETRY_BUDGET` 193 |"
+    at = fix_doc_linenos._pick_occurrence(line, "193", "VERIFIER_MODE_CHOICES")
+    assert at is not None, "没有挑出来，会退化成「跳过并交人工」"
+    assert line[:at].endswith("`VERIFIER_MODE_CHOICES` "), f"挑到了另一个 193：{line[:at]!r}"
+    # 锚点不在这一行时**不许猜**：宁可交人工，也不能改错位置。
+    assert fix_doc_linenos._pick_occurrence(line, "193", "不在这行的名字") is None
