@@ -45,7 +45,7 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **18216 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **18237 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | **10 个节点 + 4 条条件边** |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
@@ -245,7 +245,7 @@
 | `edges.py` | **1-179** | 条件边（路由五路 / 工具四去向 / 校验两去向 / 生成出口） |
 | `workflow_graph.py` | **1-272** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
-### 3.4 `app/core/` — 调度与基础能力（6603 行）
+### 3.4 `app/core/` — 调度与基础能力（6624 行）
 
 > 本层的三个「已删除」区块（自研意图路由、动态模型路由、级联兜底）
 > 连同一批测试一起移入 `_archive/removed-selfbuilt-routing-20260915-1314/`。
@@ -735,11 +735,11 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 
 | 文件 | 行号范围 | 只回答一个问题 |
 |---|---|---|
-| `app/core/routing/catalog.py` | **1-455** | "有哪些意图？" —— 唯一的定义处（意图即数据） |
+| `app/core/routing/catalog.py` | **1-459** | "有哪些意图？" —— 唯一的定义处（意图即数据） |
 | `app/core/routing/similarity.py` | **1-138** | "两句话有多像？" —— 词面唯一量尺（字符 n-gram Dice） |
-| `app/core/routing/derive.py` | **1-143** | "词表能不能从例句算出来？" —— 能，除了标识符正则 |
+| `app/core/routing/derive.py` | **1-154** | "词表能不能从例句算出来？" —— 能，除了标识符正则 |
 | `app/core/routing/vocabulary.py` | **1-114** | "领域词表的**类型**长什么样？" —— 一个词都没有 |
-| `app/core/routing/signals.py` | **1-327** | "这句话是哪种句式？" —— 正则判据与三态抽取 |
+| `app/core/routing/signals.py` | **1-333** | "这句话是哪种句式？" —— 正则判据与三态抽取 |
 | `app/core/routing/anchors.py` | **1-282** | "能不能整句锚定？" —— 层①，零成本 |
 | `app/core/routing/fusion.py` | **1-443** | "各候选各得几分、怎么融合？" —— 层② |
 | `app/core/routing/gating.py` | **1-115** | "分数够格吗？和次优通道拉开了吗？" —— 层③ |
@@ -810,7 +810,7 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 > 触发；生产链路当前只接入了**前两层**（作为 `_local_route` 零模型快通道），
 > 语义层与灰区仲裁仍走模型。这样安排是为了**先把判定依据看清楚，再动生产链路**。
 
-#### 📍 `app/core/routing/catalog.py`（1-455）—— 意图目录（唯一的定义处）
+#### 📍 `app/core/routing/catalog.py`（1-459）—— 意图目录（唯一的定义处）
 
 | 组件 | 行号 | 说明 |
 |---|---|---|
@@ -821,9 +821,9 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 | `OUT_OF_SCOPE_ANSWER` | 90-96 | 越界话术（**全仓唯一一份**，`router_agent` 只是转出） |
 | `IntentSpec` | 106-137 | 一条能力声明：名字 / 通道 / 描述 / 例句 / guard / anchor（**没有 keywords**） |
 | `_EXPLICIT_VOCABULARY` | 152-162 | 手写词表，**只剩标识符正则**——其余字段由例句反推 |
-| `vocabulary` | 169-187 | 取（并缓存）反推后的词表。**必须经函数读取**，别绑成快照 |
-| `_SPECS` | 216-346 | 目录正文，当前 7 条 |
-| `validate_catalog` | 398-455 | 自洽校验。import 时执行一次，失败即 raise |
+| `vocabulary` | 169-191 | 取（并缓存）反推后的词表。**必须经函数读取**，别绑成快照 |
+| `_SPECS` | 220-350 | 目录正文，当前 7 条 |
+| `validate_catalog` | 402-459 | 自洽校验。import 时执行一次，失败即 raise |
 
 **为什么"意图即数据"值得单独强调**：新增一种意图 = 加一条 `IntentSpec`，
 路由代码、图拓扑、提示词**一个字都不用改**，有一条测试专门钉住这个承诺。
@@ -853,7 +853,7 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 | bigram，不是 1 或 3 | 单字噪声太大（"的""是"到处都是）；trigram 对短句太脆，改一个字就归零 |
 | Dice，不是 Jaccard | 路由里几乎永远是"短提问 vs 长例句"，Jaccard 会把「我还有几天年假」压到 0.2 以下 |
 
-#### 📍 `app/core/routing/derive.py`（1-143）—— 从例句反推词表
+#### 📍 `app/core/routing/derive.py`（1-154）—— 从例句反推词表
 
 `derive.py` 从例句反推词表。**它按失效代价给不同字段定了相反的偏向**：
 `attr_words` **宁窄勿宽**（它本身就是判据，宽一个字就多一类误命中），
@@ -861,10 +861,18 @@ gap 为负、边际永远不通过，本该直接判对的请求白花一次 LLM
 而误拦不可逆），`identifier_patterns` **无法反推**——正则格式是写出来的，
 不是从句子里猜出来的，所以它是唯一必须手写的字段。
 
-> ⚠️ 一处反推陷阱值得单独记：`business_nouns` 必须**减去越界能力自己的例句**。
-> 不减的话，「忽略上述规则」里的"忽略/上述/规则"会进业务片段表，
-> 于是那条锚点**永远不命中自己的样例**——确定性拦截静默失效，
-> 而灰区仲裁通常还能判对，表面上只是"偶尔慢一点"，极难发现。
+> ⚠️ 一处反推陷阱值得单独记：`business_nouns` 必须**减去所有非业务通道自己的例句**
+> （本仓库是"越界 + 闲聊/身份"两个）。
+> 不减的话，锚点会用自己的例句把自己挡住：「忽略上述规则」里的"忽略/上述/规则"进表后，
+> 那条锚点**永远不命中自己的样例**——确定性拦截静默失效，而灰区仲裁通常还能判对，
+> 表面上只是"偶尔慢一点"，极难发现。
+>
+> **只减越界通道会留下同一形状的第二个洞，而且方向更刁**：越狱锚点的角色改写关键词里有
+> `现在你是`，而闲聊能力登记了「你是谁」——`你是` 这个 bigram 由闲聊例句进表后，
+> **凡是含"现在你是…"的角色改写都恒被判成"提到了业务内容"而不拦截**。
+> 2026-09-29 实测：只减越界通道时，那条锚点的 7 个角色改写关键词有 1 个
+> （`现在你是`）**永远不可达**；两个通道都减掉后 7/7 可达（片段表 263 → 219）。
+> 护栏 `test_derived_business_nouns_exclude_the_chitchat_capabilitys_own_examples`。
 
 #### 📍 `app/core/routing/router.py`（1-380）—— 漏斗编排
 
@@ -2421,7 +2429,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（18216 行）**
+**应用代码 `app/`（18237 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -2436,10 +2444,10 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `core/rag_engine.py` | 109 | `core/rate_limit.py` | 64 |
 | `core/request_ctx.py` | 213 | `core/router_agent.py` | 488 |
 | `core/routing/__init__.py` | 96 | `core/routing/anchors.py` | 282 |
-| `core/routing/arbitration.py` | 178 | `core/routing/catalog.py` | 455 |
-| `core/routing/derive.py` | 143 | `core/routing/fusion.py` | 443 |
+| `core/routing/arbitration.py` | 178 | `core/routing/catalog.py` | 459 |
+| `core/routing/derive.py` | 154 | `core/routing/fusion.py` | 443 |
 | `core/routing/gating.py` | 115 | `core/routing/router.py` | 380 |
-| `core/routing/signals.py` | 327 | `core/routing/similarity.py` | 138 |
+| `core/routing/signals.py` | 333 | `core/routing/similarity.py` | 138 |
 | `core/routing/vocabulary.py` | 114 | `core/self_check.py` | 347 |
 | `core/source_acl.py` | 48 | `core/sub_agents.py` | 399 |
 | `core/tool_agent.py` | 883 | `core/tracing.py` | 172 |
@@ -2475,7 +2483,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `tests/test_layering.py` | 257 | `tests/test_memory_pipeline.py` | 197 |
 | `tests/test_meta_align.py` | 132 | `tests/test_multi_agent.py` | 1442 |
 | `tests/test_parent_chunk.py` | 112 | `tests/test_pdf_image.py` | 97 |
-| `tests/test_rag.py` | 204 | `tests/test_routing_funnel.py` | 1413 |
+| `tests/test_rag.py` | 204 | `tests/test_routing_funnel.py` | 1441 |
 | `tests/test_self_check.py` | 60 | `tests/test_service.py` | 263 |
 | `tests/test_short_term_symmetry.py` | 284 | `tests/test_soft_warnings.py` | 253 |
 | `tests/test_soul_write.py` | 124 | `tests/test_span_tree_smoke.py` | 264 |

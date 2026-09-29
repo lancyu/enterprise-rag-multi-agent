@@ -182,7 +182,11 @@ def vocabulary() -> Vocabulary:
         _DERIVED_VOCABULARY = derive.derive_vocabulary(
             all_specs(),
             base=_EXPLICIT_VOCABULARY,
-            outer_channels=(SCENE_OUT_OF_SCOPE,),
+            # 两个通道都算"非业务"：越界是"不该答的问题"，闲聊/身份是
+            # "不涉及业务内容的话"。少写一个就会留下同一形状的洞 ——
+            # 只写越界时，闲聊例句「你是谁」贡献的 bigram ``你是`` 会把
+            # 越狱锚点的 ``现在你是`` 关键词挡死（详见 derive.derive_business_nouns）。
+            non_business_channels=(SCENE_OUT_OF_SCOPE, SCENE_SMALLTALK),
         )
     return _DERIVED_VOCABULARY
 
