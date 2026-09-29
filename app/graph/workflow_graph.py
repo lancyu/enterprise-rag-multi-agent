@@ -102,6 +102,10 @@ from app.graph.nodes import (
     verifier_node,
 )
 from app.graph.state import GraphState
+from app.graph.topology import (
+    compiled_edges as _compiled_edges,
+    render_mermaid as _render_mermaid,
+)
 from app.utils.logger import logger
 
 #: 图节点名（供前端面板与拓扑校验使用，唯一来源）。
@@ -258,25 +262,11 @@ pre_generation_workflow = build_pre_generation_graph()
 
 
 def get_mermaid() -> str:
-    """工作流拓扑的 Mermaid 描述（供前端渲染）。"""
-    return """flowchart TD
-    M[memory_load 身份解析·记忆加载] --> R[router 路由 Agent 意图识别·边界管控]
-    R -->|寒暄| S[smalltalk 闲聊·模板直答]
-    R -->|越界| O[out_of_scope 统一拦截]
-    R -->|单文档制度| S1[simple_rag 单次检索]
-    R -->|多文档对比| C1[complex_rag 拆解·多次检索]
-    R -->|结构化数据| T[tool 工具 Agent function calling]
-    S --> E[END]
-    O --> E
-    S1 --> V[verifier 证据校验·只判对齐]
-    C1 --> V
-    T -->|反问用户| E
-    T -->|决策失败| G2[human_fallback 人工兜底]
-    T -->|不支持 function calling| S1
-    T -->|取回证据| V
-    V -->|不符且还有预算| R
-    V -->|对齐| G[generate_answer 受控生成]
-    G --> F{异常检测}
-    F -->|异常| G2
-    F -->|正常| E
-    G2 --> E"""
+    """工作流拓扑的 Mermaid 描述（供前端渲染）。
+
+    从**编译图的边集**派生，不是手写常量 —— 出边少了/多了会在这里表现为
+    ``topology.ungrounded()`` 报错（由 ``tests/test_topology_rendering.py`` 守），
+    而不是「前端图上悄悄少一条箭头」。呈现文案（别名 / 分支标签）在
+    ``app/graph/topology.py``。
+    """
+    return _render_mermaid(_compiled_edges(enterprise_workflow))

@@ -7,6 +7,14 @@ from fastapi import APIRouter, HTTPException
 from app.core.errors import public_detail
 from app.core.tracing import begin_trace, end_trace, span
 from app.graph.state import create_initial_state
+from app.graph.topology import (
+    branch_declarations,
+    compiled_edges,
+    compiled_nodes,
+    conditional_sources,
+    node_labels,
+    ungrounded,
+)
 from app.graph.workflow_graph import enterprise_workflow, get_mermaid
 from app.utils.logger import logger
 from app.utils.validator import WorkflowExecuteRequest
@@ -14,76 +22,37 @@ from app.utils.validator import WorkflowExecuteRequest
 router = APIRouter(prefix="/workflow", tags=["工作流引擎"])
 
 # ============================================================
-# 单一事实来源：工作流拓扑声明。
-# 必须与 app/graph/workflow_graph.build_workflow_graph 完全对应。
-# 通过 _validate_topology() 在模块加载时与编译图节点的实际集合做断言，
-# 一旦有人新增/改名节点却忘了同步这里，启动日志会立刻告警 —— 杜绝面板与
-# 真实图漂移（评估 P1-5）。
+# 拓扑呈现：节点中文名与条件分支**都从编译图派生**。
+#
+# 这里曾经是**手写声明**（注释还自称「单一事实来源」）—— 它其实是第三份手写副本：
+# `workflow_graph.get_mermaid()` 一份、本文件一份、`static/index.html` 的手画 SVG 一份。
+# 三份守同一件事，于是 2026-09-24 那条 `tool → verifier` 边摘掉又接回时真的分叉过。
+#
+# 现在：事实 = 编译图（唯一）；文案 = `app/graph/topology.py` 的呈现表。
+# `_validate_topology()` 在模块加载时做**双向**接地检查 —— 呈现表漏一个节点/一条边
+# （图上会缺东西）、或多一个（图上会出现不存在的流转），启动日志立刻告警。
 # ============================================================
 ENTRY_POINT = "memory_load"
 
-NODE_LABELS = {
-    "memory_load": "请求初始化·身份解析·记忆加载",
-    "router": "路由 Agent（意图识别·边界管控）",
-    "smalltalk": "闲聊 Agent（模板直答）",
-    "out_of_scope": "越界拦截（常量话术）",
-    "simple_rag": "简单 RAG Agent（单次检索）",
-    "complex_rag": "复杂 RAG Agent（拆解·多次检索）",
-    "tool": "工具 Agent（function calling）",
-    "verifier": "证据校验（按需触发）",
-    "generate_answer": "受控生成",
-    "human_fallback": "人工兜底",
-}
-
-# 条件分支：from 节点 → 路由可达的目标节点列表（END 表示图终点）。
-BRANCHES = [
-    {
-        "from": "router",
-        "type": "conditional",
-        "routes": ["smalltalk", "out_of_scope", "simple_rag", "complex_rag", "tool"],
-        "note": "五个场景各自独立；越界在入口拦下，不进任何子 Agent。二次判定（被退回时）也走这里",
-    },
-    {
-        "from": "tool",
-        "type": "conditional",
-        "routes": ["human_fallback", "END", "simple_rag", "verifier"],
-        "note": "决策失败→人工兜底；反问用户→结束；不支持 function calling→改道简单 RAG；取回证据→证据校验（按需触发，出过状况才复核）",
-    },
-    {
-        "from": "verifier",
-        "type": "conditional",
-        "routes": ["generate_answer", "router"],
-        "note": "证据与问题不符且未超重试预算→退回路由重判（图里唯一回边）；其余→受控生成。由 simple_rag / complex_rag / tool 三个证据出口进入",
-    },
-    {
-        "from": "generate_answer",
-        "type": "conditional",
-        "routes": ["human_fallback", "END"],
-    },
-]
+NODE_LABELS = node_labels()
+BRANCHES = branch_declarations(
+    compiled_edges(enterprise_workflow), conditional_sources(enterprise_workflow)
+)
 
 
 def _validate_topology() -> None:
-    """校验拓扑声明与编译图实际节点集合一致，捕获漂移。
+    """校验呈现表与编译图**双向**一致，捕获漂移。
 
     仅在编译图暴露 ``nodes`` 属性时生效；属性缺失则静默跳过（不阻断启动）。
     """
-    # LangGraph 会在编译图中注入 __start__ / __end__ 等伪节点，过滤掉再比较
-    compiled_nodes = {
-        name
-        for name in (getattr(enterprise_workflow, "nodes", {}) or {})
-        if not name.startswith("__")
-    }
-    if not compiled_nodes:
+    nodes = compiled_nodes(enterprise_workflow)
+    if not nodes:
         return
-    declared = set(NODE_LABELS)
-    if compiled_nodes != declared:
-        missing = declared - compiled_nodes
-        extra = compiled_nodes - declared
+    problems = ungrounded(nodes, compiled_edges(enterprise_workflow))
+    if problems:
         logger.warning(
-            "工作流拓扑声明与编译图不一致（面板可能展示过时拓扑）：缺少=%s 多余=%s",
-            sorted(missing),
-            sorted(extra),
+            "工作流拓扑呈现表与编译图不一致（面板/接口会展示过时拓扑）：%s",
+            "；".join(problems),
         )
 
 

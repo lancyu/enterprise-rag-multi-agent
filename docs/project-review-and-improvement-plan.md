@@ -59,10 +59,10 @@ langgraph-enterprise-bot/
 
 | 问题 | 事实 | 为什么是问题 |
 |---|---|---|
-| 工具脚本混进应用包 | `app/static/gen_favicon.py`（148 行，PNG/ICO 光栅化） | 既不属 `app/` 的任何职责，也不被任何模块 import（死代码扫描报 `unreferenced_module`）；它应该在 `scripts/` |
+| ~~工具脚本混进应用包~~ ✅ | **已归位**：`scripts/gen_favicon.py`（155 行，PNG/ICO 光栅化），2026-09-29 从 `app/static/` 挪出 | 原先既不属 `app/` 的任何职责，也不被任何模块 import（死代码扫描报 `unreferenced_module`，靠一条豁免压着）。归位后告警自然消失，**豁免条目也一并删掉**——那条豁免其实是在给「位置放错」打补丁 |
 | 「兼容 shim」散在三个层 | `app/core/llm_factory.py`(23 行) → `providers/llm`；`app/utils/embedding.py`(22 行) → `providers/embeddings`；`app/rag/rerank.py`(8 行) → `providers/rerank` | **同一类事物（转发层）放在三个不同的包**。其中 `rag/rerank.py` 只有 1 个生产消费者，价值最低 |
 | 五层 RAG 有两个出口 | `app/core/rag_engine.py`(109 行) 与 `app/rag/__init__.py`(68 行) 都是五层的对外门面 | 改一个入口要同时想两个；新人不知道该从哪个进 |
-| 备份目录无界增长 | `artifacts/backup/doc-linenos-*` 快照，**4 天内 21 份**，`artifacts/` 共 25 MB | 已 gitignore 不影响仓库，但本地全文检索/编辑器索引会被旧版源码副本污染 |
+| ~~备份目录无界增长~~ ✅ | **已加保留上界**：`scripts/prune_backups.py`，自动快照留最近 5 份（2026-09-29 实测已涨到 **67 份、装的全是同一个文档**） | 已 gitignore 不影响仓库，但本地全文检索/编辑器索引会被旧版源码副本污染；清理后 `artifacts/` 30 MB → 22 MB |
 
 ---
 
@@ -359,16 +359,33 @@ app/tools → db                                                          ← �
 
 | 编号 | 事项 | 证据 / 方向 | 验收 |
 |---|---|---|---|
-| P2-1 | 工具脚本归位 | `app/static/gen_favicon.py` → `scripts/` | 死代码扫描不再报 `unreferenced_module` |
+| P2-1 | ✅ **工具脚本归位**（2026-09-29 完成） | `app/static/gen_favicon.py` → `scripts/gen_favicon.py`；输出目录改为显式指向 `app/static/`（原用 `Path(__file__).parent`，挪走后会静默写错地方）；顺手删掉 `write_png` 与 `__main__` 里两份重复的 PNG 编码 | 死代码扫描不再报 `unreferenced_module` —— 已达成，且**豁免条目已删除**（若告警仍在，删豁免会让 `test_deadcode` 直接红）。六份产物重跑后**哈希逐字节一致** |
 | P2-2 | shim 归位 | 3 个转发 shim 统一到一处（或直接删除、改调用方） | `app/core/llm_factory.py` / `app/utils/embedding.py` / `app/rag/rerank.py` 至少删掉其中 1 个 |
 | P2-3 | 五层 RAG 只留一个出口 | `core/rag_engine.py` 与 `rag/__init__.py` 二选一 | 文档里只出现一个入口名 |
 | P2-4 | 多查询并行检索 | LangGraph 原生 `Send` 扇出（同技术栈，改动最小） | 复杂 RAG 在 NDCG 上有提升，且延迟不线性增长 |
 | P2-5 | ACL 纳入评测 | 参考 Onyx `evals/eval_cli.py --search-permissions-email`；本项目只需给评测脚本加 `--as-user` | 存在用例「用户 A 检索不到源 B」，且纳入回归 |
 | P2-6 | 排序加入反馈/时间因子 | 参考 Onyx 的 `document_boost` × `recency_bias` | 老文档不再长期霸榜（可观测到排序变化） |
 | P2-7 | 低相关度显式告警 | 参考 kotaemon「检索结果低相关时给用户告警」 | 低分召回时前端有提示，而不是照常生成 |
-| P2-8 | `artifacts/backup/` 保留策略 | 4 天 21 份快照，无界增长 | 只保留最近 N 份 / 按天去重 |
+| P2-8 | ✅ **`artifacts/backup/` 保留策略**（2026-09-29 完成） | 实测**已涨到 67 份自动快照、装的全是同一个文档**（`project-introduction.md` 的各期版本）。代价不是磁盘是**搜索**——`grep` 反复命中过期副本，而「这是现行实现」与「这是某天的副本」要额外分辨，漏掉分辨就会照着错的下结论 | `scripts/prune_backups.py` + `fix_doc_linenos.py --write` 自动收敛；实测 6→（+1，−2）→5；反向验证 4/4 变红 |
 | P2-9 | 核对 RRF 的 k | 项目用 `1/(k+rank)`；Haystack 注释指出论文的 60（1-based）应对应代码里的 **61**（0-based） | 确认 rank 起点后决定是否改为 61，并记录理由 |
 | P2-10 | 统一「条件边/节点数」的表述 | 见 P0-5；`docs/history/` 里的旧说法**不改写**，只在 `docs/README.md` 加提示 | 现行文档（README + project-introduction + multi-agent-architecture）口径一致 |
+
+**P2-8 补记（两条只有真跑才能发现的东西）**：
+
+1. **判据必须严格到「日期-时间」形状，不能按 `doc-linenos-` 前缀匹配。** 目录里真有一个
+   `doc-linenos-mine-230057`，名字借用了同一个前缀，里面却是**4 份人工挑的文档**
+   （`feasibility-and-value.md` / `value-remediation-plan.md` /
+   `tool-invocation-online-vs-offline.md` / `intent-routing-hardening-plan.md`）。
+   按前缀匹配会把它连同内容一起静默移走——不报错，只是某天想找这几份文档时发现没了。
+   护栏：`test_a_handmade_snapshot_wearing_the_auto_prefix_is_not_touched`（造样本）
+   + `test_the_real_handmade_snapshot_is_excluded_on_real_data`（真实目录复核）。
+2. **接线的第一次真实运行就暴露了一个「看着在跑、实际没动」的漏参。**
+   `_prune_backups` 调 `prune()` 时漏了 `apply=True`，而 `prune()` 默认 dry-run ——
+   日志照打「已清掉 1 份旧快照 → None」，快照数照旧每次 +1。
+   **测试当时全绿**（只查了扫描面、没查参数），是实跑日志里那个 `None` 露的馅。
+   已补 `test_the_backfill_step_calls_the_retention_policy_with_apply`（查参数）与
+   `test_the_backfill_step_prunes_for_real`（端到端查结果），并让日志在没真移时
+   只说「未被移动」、不说「已清掉」。
 
 ---
 
@@ -413,6 +430,50 @@ app/tools → db                                                          ← �
 `DOCSTORE_STRATEGY` 分区时就是这样，仍需手工插入一行（可用
 `verify_doc_linenos.config_partition_spans()` 算出跨度）。
 "能改数字、不能生行"是有意留的边界：发明描述文字属于人该做的事。
+
+---
+
+## 九、多 Agent 架构评审结论（2026-09-29 并入）
+
+> 本节来自 2026-09-29 的一次架构评审。它当时是一份**独立文档**，
+> 与 `multi-agent-architecture.md` 在"职责划分""协作机制"两节上大段重叠——
+> 那是本仓库反复出现的缺陷（**同一语义在两处各定义一遍**）在**文档层**的又一次复现。
+> 现已拆开：**实测证据**留在
+> [`multi-agent-architecture.md` §十](multi-agent-architecture.md)，**结论与待办**落在本节。
+
+### 9.1 结论：保留五 Agent 拓扑，不精简
+
+依据全部来自实测，不是设计意图：
+
+1. **没有为"拆"付出固定成本。** 拆分的常见代价是"每个 Agent 都要一次模型调用"，
+   而实测：闲聊 **0 次**、越界 **0 次**、本地快通道命中 **97.8%**、校验 **80.7% 跳过**。
+   占 97.4% 的典型 `simple_rag` 轮次，串行关键路径上只有 **2 个** Agent。
+2. **能找到的"可合并候选"在资源边界上其实不同。** 简单/复杂 RAG 的差别是
+   "取一次 vs 拆解后取多次"；工具与检索的差别是"读只读 DB vs 读向量库"。
+   合并会把 `multi-agent-architecture.md` 里那张失败归属表重新搅在一起——
+   那正是拆分要解决的问题。
+3. **边界的收益是结构性的**：越界零幻觉（常量话术）、边界规则单点、生成能力单点、
+   两个编译产物结构上不可能漂移。这些不随流量分布变化。
+
+**判据补充**：本项目的拆分是按**资源**切的，不是按**难度**切的；
+按难度切才会出现"多一个 Agent 只多一层转发"的纯开销，这里没有。
+
+### 9.2 待办：4 件事（按优先级）
+
+| # | 事项 | 验收标准 | 状态 |
+|---|---|---|---|
+| ① | **给"文档里的拓扑声明"补护栏** | 一条测试扫描 `README` / `docs/README` / `multi-agent-architecture` / `project-introduction` / `index.html`，断言"哪条边存在"的散文表述与编译图不矛盾；**退回修复后必须变红** | ✅ **已完成，并于 2026-09-29 换掉了实现**。初版 `tests/test_topology_prose.py` 用**散文正则规则表**（3 规则 / 7 条命中正则 / 15 条探针）。实测该做法是**半吊子**：三句语义等价、意思相反的错话（"工具 Agent 拿到的数据不参与校验" / "输出不做证据核对" / "function calling 的结果无需复核即可进 L4"）**3/3 全部漏过**，且必须给自家文档的历史复盘开白名单（假报）。根因是**判据判的是措辞、不是事实** —— 与 `verifier` 触发判据里撤掉的那三条代理信号是同一个错误。<br>**换掉的办法是消除缺陷源**：`get_mermaid()` 与 `api/workflow.py` 的 `NODE_LABELS`/`BRANCHES` 改为从**编译图派生**（手写副本三份 → 零份，文案集中在新增的 `app/graph/topology.py`）；面板 SVG 手工排版保留，但每条箭头用 `data-edge` 声明自己画的是哪条边。护栏换成 `tests/test_topology_rendering.py`（11 项）：呈现表接地、mermaid 边集双向、面板声明集合双向、**逐条箭头几何**、文档内 `A → B` 符号引用必须是真的边。<br>⚠️ **上线当天就抓到一处真缺陷**：面板只画了 18 条箭头，漏了 `tool → END`（"反问用户 · 已有答案"）—— 旧判据只校验**一条**箭头的几何，所以它躺了很久没人发现。已补齐（19/19）。 |
+| ② | **补"兜底边"的线上验证** | 造 2~3 条会触发复核的**真实**工具轮，确认干净轮 `trigger=not_needed`、出状况的轮 `trigger=degraded`。**不要为此新增机制**——现有的 `soft_warnings` 通路就够，缺的只是**证据** | ⬜ 待做 |
+| ③ | **优化 `verifier` 的 prefill 重复** | `verify_evidence` 与 `ANSWER_PROMPT` 共享证据前缀（影响面 19.3% 的轮次）。⚠️ **共享前缀可以，合并职责不可以** | ⬜ 待做 |
+| ④ | **把优化火力对准检索侧** | 检索耗时方差 2ms~4.1s，而编排层固定开销只有十几毫秒。压 Agent 数量的收益上界是十几毫秒，压检索尾延迟的收益是**秒级** | ⬜ 待做 |
+
+### 9.3 明确**不建议**做的三件事
+
+| 不建议 | 理由 |
+|---|---|
+| 把 `verifier` 合并进 `generate_answer` | 裁判必须在生成之前；合并会让两者都不可测 |
+| 用"模型自省"替代 `verifier` 触发判据 | 循环论证：生成模型看不出证据不匹配，**正是它写出流畅错答案的原因** |
+| 重新引入"走了工具链路就复核"这类**代理信号** | 判据与风险不是同一件事；实测每轮白付 1551ms（占整轮 17%~25%），54 次判定 MISMATCH = 0 |
 
 ---
 

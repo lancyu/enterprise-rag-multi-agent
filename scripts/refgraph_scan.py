@@ -6,8 +6,10 @@
 `scripts/deadcode_scan.py` 判定一个定义是否被使用时，取的是全仓
 「裸名 / 属性名 / 字符串 token / import 名」的**并集**。只要同名名字在
 任何地方出现过，就认为它被用到了。后果：`app/core/prompts.py` 的
-`render` 与 `app/static/gen_favicon.py` 的 `render` 撞名，
+`render` 与 `scripts/gen_favicon.py` 的 `render` 撞名，
 `prompts.render` 的存在感被 `gen_favicon.render` 完全掩盖 → 漏报。
+（这个例子至今成立：`gen_favicon.py` 原先住在 `app/static/` 下，
+2026-09-29 按 P2-1 挪进了 `scripts/`，但两边依然都叫 `render`。）
 
 本脚本改用**限定名解析**，为每个定义收集四类证据：
 

@@ -15,7 +15,7 @@
 |---|---|---|
 | [`../README.md`](../README.md) | 项目是什么、怎么跑起来 | **从这里开始** |
 | [`project-introduction.md`](project-introduction.md) | **带精确行号的代码地图 + 小白原理讲解**。每个模块在哪个文件的第几行 | 要改代码前先查这里定位 |
-| [`multi-agent-architecture.md`](multi-agent-architecture.md) | 五 Agent 协作架构（路由 / 闲聊 / 简单 RAG / 复杂 RAG / 工具） | 理解整体编排 |
+| [`multi-agent-architecture.md`](multi-agent-architecture.md) | 五 Agent 协作架构（路由 / 闲聊 / 简单 RAG / 复杂 RAG / 工具）。**§十 = 线上 trace 实测开销与复算口径**（三条过滤口径，漏一条就会读错中位数） | 理解整体编排；引用性能数字前必读 §十 |
 | [`intent-routing-hybrid-design.md`](intent-routing-hybrid-design.md) | 四层混合路由**设计稿 + 实现后记**：惰性升级、时间预算、不谎报三字段、词表从例句反推（**§十一必读**，见下方告示） | 理解路由判据**为什么**这么定 |
 | [`tool-json-schema.md`](tool-json-schema.md) | 工具 Agent 的实现与 Function Calling JSON Schema | 增删工具时 |
 | [`deployment.md`](deployment.md) | 部署与运维手册，**含"它不能怎么跑"** | 上线 / 排障 |
@@ -84,8 +84,8 @@
 `history/` 里多处写着 **8 节点 / 2 条件分支**（单 Agent 时期的拓扑），
 也有写成 9 节点 / 4 条件分支的。**现状是 10 节点 / 4 条件边**
 （`memory_load → router → {smalltalk, out_of_scope, simple_rag, complex_rag, tool}`；
-其中两个检索 Agent 汇入 `verifier` 再进 `generate_answer`，工具 Agent 取回证据后
-**直接**进 `generate_answer`——工具链路不经证据校验；四条条件边分别是
+其中三个证据出口——两个检索 Agent **和工具 Agent**——一律先汇入 `verifier`，
+再由它决定进 `generate_answer` 还是退回 `router` 重判；四条条件边分别是
 `scene_route_edge` / `tool_route_edge` / `verifier_route_edge` / `error_route_edge`）。
 
 三个数对不上的原因很简单：**直答出口（`smalltalk` / `out_of_scope`）走的是普通边**，

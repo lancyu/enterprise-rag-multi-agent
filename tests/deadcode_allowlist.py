@@ -26,12 +26,15 @@ from typing import Dict
 # 豁免条目：key -> 保留理由
 # ---------------------------------------------------------------------------
 ALLOWLIST_REASONS: Dict[str, str] = {
-    # 构建期脚本，非运行时模块：由开发者手动执行 `python app/static/gen_favicon.py`
-    # 生成 favicon 资源，产出物（png/ico）已被前端静态引用。它本就不该被 import。
-    "unreferenced_module:app/static/gen_favicon.py:app.static.gen_favicon": (
-        "构建期资源生成脚本，手工执行；产出 favicon.png/favicon.ico 供静态引用，"
-        "不是运行时模块，无需被 import。"
-    ),
+    # ---- 构建期脚本：归位后不再需要豁免（P2-1，2026-09-29）----
+    # `gen_favicon.py` 原本躺在 `app/static/` 下，于是被当成"未被引用的应用模块"报出来，
+    # 这里给它开了一条豁免。但那条豁免是在给**位置放错**打补丁：
+    # 它既不属 `app/` 的任何职责，也不被任何模块 import，本就该住在 `scripts/`。
+    # 挪过去之后，扫描器对 `scripts/` 下的模块本就不做未引用判定（见
+    # `deadcode_scan.py` 里跳过 `scripts` 的那处），告警自然消失，豁免随之删除。
+    #
+    # 这条注释留着，是为了记住"豁免可以是错误位置的止痛药"——
+    # 下次想加豁免时先问一句：这是真的该保留，还是它放错了地方？
 
     # ---- redis.asyncio 降级替身的接口完整性 ----
     # MemoryRedis 是真实 Redis 不可用时的进程内替身，价值在于「可替换性」。

@@ -2,12 +2,19 @@
 
 不依赖 Pillow：zlib + struct 手写 PNG 编码，4x 超采样抗锯齿。
 产出：favicon.png (256/64/32/16)、apple-touch-icon.png (180)。
+
+**产物写回 `app/static/`，不是脚本所在目录**（见 `OUT_DIR` 的注释）。
+本文件是**构建期脚本**，手工执行一次即可，不被任何运行时模块 import。
 """
 import struct
 import zlib
 from pathlib import Path
 
-OUT_DIR = Path(__file__).resolve().parent
+#: 产物目录 = 前端静态目录。
+#: **不能用 `Path(__file__).parent`**——本脚本住在 `scripts/`，那样会把 favicon 生成到
+#: 脚本目录里。而这个失败是静默的：脚本正常退出、打印一串看着没问题的路径，
+#: 只有页面图标 404 才看得出来（还要先想到去清浏览器缓存）。
+OUT_DIR = Path(__file__).resolve().parent.parent / "app" / "static"
 
 # ---------- 几何定义（与 logo.svg 的 64x64 viewBox 一致） ----------
 SIZE = 64.0
@@ -88,8 +95,15 @@ def render(size, ss=4):
     return rows
 
 
-def write_png(path, rows):
-    h = len(rows); w = len(rows[0]) // 3   # rows 每像素 3 字节
+def to_png_bytes(rows):
+    """把像素行编码成 PNG 字节流（8 位真彩、无透明通道）。
+
+    `write_png` 与 `__main__` 都要"先拿到字节再决定写哪儿/收不收集"，
+    所以编码只留这一份。以前这段在两个地方各写了一遍——改一处忘一处的话，
+    产出的 ICO 内嵌 PNG 与独立 PNG 会悄悄变成两种格式。
+    """
+    h = len(rows)
+    w = len(rows[0]) // 3                   # rows 每像素 3 字节
     raw = b"".join(b"\x00" + r for r in rows)
 
     def chunk(tag, data):
@@ -100,7 +114,12 @@ def write_png(path, rows):
     png += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
     png += chunk(b"IDAT", zlib.compress(raw, 9))
     png += chunk(b"IEND", b"")
-    Path(path).write_bytes(png)
+    return png
+
+
+def write_png(path, rows):
+    h = len(rows); w = len(rows[0]) // 3   # rows 每像素 3 字节
+    Path(path).write_bytes(to_png_bytes(rows))
     print(f"  {path}  {w}x{h}")
 
 
@@ -122,27 +141,15 @@ def build_ico(path, png_blobs):
 
 
 if __name__ == "__main__":
-    print("光栅化渲染（4x 超采样）…")
+    print(f"光栅化渲染（4x 超采样）→ {OUT_DIR}")
     blobs = []
     for size in (16, 32, 64, 256):
         rows = render(size, ss=4 if size <= 64 else 2)
-        # write_png 输出同时收集 blob
-        h = len(rows); w = len(rows[0]) // 3   # rows 每像素 3 字节
-        raw = b"".join(b"\x00" + r for r in rows)
-
-        def chunk(tag, data):
-            c = struct.pack(">I", len(data)) + tag + data
-            return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-
-        png = b"\x89PNG\r\n\x1a\n"
-        png += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-        png += chunk(b"IDAT", zlib.compress(raw, 9))
-        png += chunk(b"IEND", b"")
+        png = to_png_bytes(rows)
         name = "favicon.png" if size == 256 else f"favicon-{size}.png"
         (OUT_DIR / name).write_bytes(png)
         print(f"  {name}  {size}x{size}")
-        blobs.append((size if size <= 64 else 256, png))
+        blobs.append((size, png))
     build_ico(OUT_DIR / "favicon.ico", blobs)
-    rows = render(180, ss=2)
-    write_png(OUT_DIR / "apple-touch-icon.png", rows)
+    write_png(OUT_DIR / "apple-touch-icon.png", render(180, ss=2))
     print("完成")

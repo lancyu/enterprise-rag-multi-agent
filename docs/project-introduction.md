@@ -5,7 +5,7 @@
 >
 > | 文档 | 侧重 |
 > |---|---|
-> | `README.md`（948 行） | 怎么装、怎么跑、有哪些接口 |
+> | `README.md`（986 行） | 怎么装、怎么跑、有哪些接口 |
 > | `项目学习指南.md`（965 行） | 面试问答、话术素材、必背数字 |
 > | **本文**（`docs/project-introduction.md`） | **每个模块干什么、代码在哪几行、底层用了什么知识** |
 >
@@ -45,11 +45,11 @@
 
 | 指标 | 数值 |
 |---|---|
-| 应用代码 | **18149 行**（`app/`，不含测试与脚本） |
+| 应用代码 | **18216 行**（`app/`，不含测试与脚本） |
 | 包数量 | 9 个（api / core / db / graph / memory / providers / rag / tools / utils） |
 | LangGraph 节点 | **10 个节点 + 4 条条件边** |
 | HTTP 接口 | 8 个 router，约 31 个端点 |
-| 测试 | 40 个文件（36 个 `test_*.py`），`pytest` **679 项全绿** |
+| 测试 | 43 个文件（39 个 `test_*.py`），`pytest` **715 项全绿** |
 | 内置语料 | 12 个文档，切分后 **176 个片段** |
 
 ---
@@ -214,7 +214,7 @@
 | `app/config.py` | **1-895** | 全局配置中心（所有环境变量集中于此） |
 | `app/runtime_flags.py` | **1-66** | **零依赖**运行时标志位：provider → config 的**单向**事实通道（见 §4.1 末尾） |
 
-### 3.2 `app/api/` — HTTP 接口层（1544 行）
+### 3.2 `app/api/` — HTTP 接口层（1513 行）
 
 | 文件 | 行号范围 | 路由前缀 | 职责 |
 |---|---|---|---|
@@ -222,7 +222,7 @@
 | `knowledge.py` | **1-182** | `/knowledge` | 知识库上传 / 删除 / 搜索 / 重建索引 |
 | `dify.py` | **1-379** | `/retrieval`、`/dify` | 把自己接成 Dify 的"外部知识库" |
 | `memory.py` | **1-134** | `/memory` | 记忆读写运维（灵魂、事实、画像、蒸馏） |
-| `workflow.py` | **1-159** | `/workflow` | 工作流状态查询与手动触发（拓扑声明在此，加载时与编译图做断言） |
+| `workflow.py` | **1-128** | `/workflow` | 工作流状态查询与手动触发（拓扑声明在此，加载时与编译图做断言） |
 | `evaluation.py` | **1-81** | `/evaluate` | 检索评测、报告、改进建议、反馈统计 |
 | `test.py` | **1-33** | `/test` | 自测：全量 9 项 / 快速 3 项 / 健康检查 |
 | `routing.py` | **1-110** | `/routing` | **混合路由预演**：`POST /routing/intent-preview`（判给谁 + 逐层证据 + 耗时）与 `GET /routing/catalog`（意图目录快照）。只读、无副作用、不进任何子 Agent |
@@ -236,14 +236,14 @@
 > 把"这句话会被判成哪条路、凭什么"逐条摊开。**生产只采信它的前两层**
 > （锚定 + 词面，零成本零模型），判不了的交回模型——**先能看清，再敢切换**。
 
-### 3.3 `app/graph/` — LangGraph 编排层（1412 行）
+### 3.3 `app/graph/` — LangGraph 编排层（1658 行）
 
 | 文件 | 行号范围 | 职责 |
 |---|---|---|
 | `state.py` | **1-217** | 全局状态 `GraphState` + 初始态工厂（`scene` 与 `intent_type` 的分工见模块 docstring） |
 | `nodes.py` | **1-733** | 10 个节点的实现（含五个 Agent + 证据校验） |
 | `edges.py` | **1-179** | 条件边（路由五路 / 工具四去向 / 校验两去向 / 生成出口） |
-| `workflow_graph.py` | **1-282** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
+| `workflow_graph.py` | **1-272** | 图的装配、编译、Mermaid 导出（两个编译产物共用一套装配函数） |
 
 ### 3.4 `app/core/` — 调度与基础能力（6603 行）
 
@@ -517,7 +517,7 @@ OpenAI 的常落在 0.3~0.9，bge-m3 常落在 0.05~0.15。
 | `knowledge.py` | 上传 `79-145`、删除 `149-152`、搜索 `156-166`、重建 `170-182` | 上传两道闸：先看 `Content-Length` 预检，再分块累加（`_read_limited:31-50`），**不能先全量读进内存再判大小**；`_REBUILD_LOCK:19` 保证重建索引串行。上传的正文解析走 `doc_loader.load_file`——**与重建路径同一个入口**（P0-3） |
 | `dify.py` | 检索 `210-261`、OpenAPI `283-358` | 见下方"score 归一化"说明 |
 | `memory.py` | soul 写入 `44-79` | `AUTH_ENABLED=false` 时直接 403——"一次改掉全站人格"的能力不该存在于无防护服务上 |
-| `workflow.py` | 拓扑校验 `66-87`、执行 `107-159` | `_validate_topology` 在模块加载时比对声明拓扑与真实图，防止前端面板与真实执行路径漂移 |
+| `workflow.py` | 拓扑校验 `43-56`、执行 `107-159` | `_validate_topology` 在模块加载时比对声明拓扑与真实图，防止前端面板与真实执行路径漂移 |
 | `routing.py` | 阈值快照 `54-72`、预演 `76-93`、目录 `97-110` | **纯预演、零副作用**：不写 `request_ctx`、不调子 Agent、不写库。旧的统计 / 标定端点已随自造路由删除，`match_intent` 上也没有 `record` 参数了 |
 | `evaluation.py` | 评测 `19-47`、报告 `51-57` | 会真实调用 embedding——**每次评测都是一次真实的远端向量化**，按需控制用例数 |
 | `test.py` | 全量 `13-17`、快速 `21-24` | `/test/all` 会真实调 LLM，**不要挂到探针轮询上** |
@@ -600,7 +600,7 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 | 业务工具**执行**失败 | 不能 | 转人工兜底 |
 | 参数不合 schema / 护栏拒绝 | —— | 归 `rejected`（模型侧问题），**不转人工**，让模型自我纠正或向用户追问 |
 
-#### 📍 `app/graph/edges.py`（1-179）与 `workflow_graph.py`（1-282）
+#### 📍 `app/graph/edges.py`（1-179）与 `workflow_graph.py`（1-272）
 
 **条件边就是普通函数**：读 state，返回一个字符串，LangGraph 拿这个字符串去映射表里找下一个节点。
 
@@ -623,19 +623,47 @@ LangGraph 的状态就是一个**在节点之间传递的大字典**。
 有上界（`REROUTE_COUNT <= ROUTE_RETRY_BUDGET`，默认 1）。
 没有上界的环就是死循环，`ROUTE_RETRY_BUDGET=0` 则退化成"只校验、不改道"。
 
-**两个编译产物共用同一个装配函数**：`_wire(graph, generation_target=...)`（140-224）认的是
+**两个编译产物共用同一个装配函数**：`_wire(graph, generation_target=...)`（144-228）认的是
 「证据就绪之后通向哪」这一个差异，于是 `build_workflow_graph`（221-230，10 节点）与
 `build_pre_generation_graph`（233-245，9 节点）不可能漂移。流式链路**不可能**重抄业务逻辑。
 
-**拓扑计数不许写死**：`conditional_branch_count()`（122-137）从**编译图**按「出发节点」
+**拓扑计数不许写死**：`conditional_branch_count()`（126-141）从**编译图**按「出发节点」
 去重数条件分支点。注意不能直接数边——LangGraph 会把一条条件边按目标展开成多条
 （`router` 那一条展开成 5 条），边长 5+4+2+2=13，而分支点只有 4 个（含 `generate_answer`
 那条）。启动日志用的就是它。
 
-**⚠️ 注意**：`get_mermaid()`（260-282）返回的是**手写的常量字符串**，不是从编译图自动导出的。
-拓扑改了如果忘了同步这里，前端展示的流程图就会和真实执行路径不一致。
-`app/api/workflow.py` 的 `NODE_LABELS` 会在模块加载时拿它与编译图的节点集合做断言，
-漂移会在启动日志里告警——但那只覆盖节点集合，覆盖不到连线。
+**拓扑呈现只有一个来源**：`get_mermaid()`（264-272）从**编译图的边集**派生，呈现文案
+（mermaid 别名、分支标签、中文图例）集中在 `app/graph/topology.py` 的呈现表里。
+`app/api/workflow.py` 的 `NODE_LABELS` / `BRANCHES` 同样从编译图派生，并在模块加载时用
+`topology.ungrounded()` 做**双向**接地检查——呈现表漏一个节点/一条边（图上会缺东西）
+或多一个（图上会出现不存在的流转），启动日志立刻告警。
+
+面板 SVG 是**手工排版**的（自动布局会把它画烂），但每条 `<path>` 用 `data-edge`
+声明它画的是哪条边。`tests/test_topology_rendering.py` 断言这份声明集合等于编译图边集，
+并逐条判**几何**：起止点必须分别落在它声明的两个方框上。这套判据上线当天就抓到
+一处真缺陷——面板只画了 18 条箭头，漏了 `tool → END`（"反问用户 · 已有答案"）。
+
+#### 📍 `app/graph/topology.py`（1-256）—— 拓扑的呈现表（唯一）
+
+**为什么单独一个模块**：同一个拓扑在本仓库曾经被**手写三遍**——`get_mermaid()` 的常量
+字符串、`api/workflow.py` 的 `NODE_LABELS` / `BRANCHES`、`static/index.html` 的手画 SVG
+（面向读者的文档里还有第四、第五遍）。守它们的是一套**用正则猜措辞**的测试，而它判的是
+措辞不是事实：2026-09-29 实测三句语义等价、意思相反的话**3/3 全部漏过**，同时还必须给
+自家文档的历史复盘开白名单（假报）。
+
+这个模块把两件事分开：**事实** = 编译图；**呈现** = 两张手写表。渲染函数只做一件事——
+**按边集遍历呈现表**。
+
+| 导出 | 作用 |
+|---|---|
+| `NODE_PRESENTATION` / `EDGE_PRESENTATION` | 呈现表（文案，不是声明） |
+| `compiled_nodes()` / `compiled_edges()` / `conditional_sources()` | 从编译图取事实 |
+| `ungrounded()` | **双向**接地检查：表里少一条 = 图上少一条箭头，多一条 = 图上多一条 |
+| `render_mermaid()` | 就是 `get_mermaid()` 的实现 |
+| `node_labels()` / `branch_declarations()` | `/workflow/status` 的 `nodes` / `branches` |
+
+**本模块零内部依赖**（只 import 标准库），所以 `workflow_graph` 可以反向 import 它而不
+会成环——这也是它不写进 `workflow_graph.py` 的硬理由。
 
 ---
 
@@ -2334,7 +2362,7 @@ open http://127.0.0.1:8001/static/index.html
 
 | 门禁 | 命令 | 当前状态 |
 |---|---|---|
-| 单元/集成测试 | `pytest tests/ -q` | **683 passed** |
+| 单元/集成测试 | `pytest tests/ -q` | **715 passed** |
 | └ 分层依赖契约（P1-2） | `pytest tests/test_layering.py -q` | 通过（下层不得 import 上层）；契约定义在 `pyproject.toml` 的 `[tool.importlinter]` |
 | └ 零依赖标志位（P1-6） | 同上（第二条 forbidden 契约） | 通过（`app/runtime_flags.py` 不许 import 任何 `app.*`） |
 | └ 增量索引对账（P1-5） | `pytest tests/test_incremental_index.py -q` | 通过（连跑两次条数不变 / 删源后片段全消失） |
@@ -2371,7 +2399,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | 脚本 | 行数 | 用途 |
 |---|---|---|
 | `scripts/deadcode_scan.py` | 904 | 死代码/死配置/死依赖扫描 |
-| `scripts/refgraph_scan.py` | 607 | 限定名引用分析（补裸名撞名漏报） |
+| `scripts/refgraph_scan.py` | 609 | 限定名引用分析（补裸名撞名漏报） |
 | `scripts/chunking_ab.py` | 326 | 切分策略 A/B 对比 |
 | `scripts/chunk_metrics.py` | 171 | 切分质量指标 |
 | `scripts/baseline_snapshot.py` | 133 | 冻结基线快照 |
@@ -2381,6 +2409,11 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `scripts/verify_milvus_lite.py` | 123 | **在真实 Milvus 引擎（Lite，免 Docker）上验证向量库适配器** |
 | `scripts/module_inventory.py` | 83 | 模块清单 |
 | `scripts/probe_routing.py` | 214 | **意图路由探针（29 条问句，分五组）**：零 LLM 跑出判对率，给「改打分/调阈值」提供可复现的 A/B 基线；**是探针不是门禁**，退出码恒 0 |
+| `scripts/eval_retrieval.py` | 278 | 检索评测：hit_rate / MRR / Recall / NDCG + 最差 N 条 |
+| `scripts/gen_favicon.py` | 155 | **favicon 光栅化（构建期手工执行）**：纯 Python（zlib+struct）手写 PNG，不依赖 Pillow；产物写回 `app/static/`（不是脚本目录） |
+| `scripts/prune_backups.py` | 150 | **`artifacts/backup/` 保留策略**：自动快照留最近 5 份、手工快照一份不碰；默认 dry-run，真移进废纸篓 |
+| `scripts/start.sh` | 191 | **一键启动**：查环境 → 建 venv → 装依赖 → 播种业务库 → 服务自检 → 起服务（README 快速开始的方式一） |
+| `scripts/backup.sh` | 55 | 任务级文件快照（改代码前的回退手段） |
 
 ---
 
@@ -2388,7 +2421,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 
 ### 附录 A：完整文件索引
 
-**应用代码 `app/`（18149 行）**
+**应用代码 `app/`（18216 行）**
 
 | 文件 | 行数 | 文件 | 行数 |
 |---|---|---|---|
@@ -2396,7 +2429,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `api/chat.py` | 465 | `api/dify.py` | 379 |
 | `api/evaluation.py` | 81 | `api/knowledge.py` | 182 |
 | `api/memory.py` | 134 | `api/routing.py` | 110 |
-| `api/test.py` | 33 | `api/workflow.py` | 159 |
+| `api/test.py` | 33 | `api/workflow.py` | 128 |
 | `config.py` | 895 | `core/__init__.py` | 1 |
 | `core/errors.py` | 72 | `core/llm_factory.py` | 23 |
 | `core/observability.py` | 39 | `core/prompts.py` | 306 |
@@ -2415,7 +2448,7 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `db/redis_db.py` | 166 | `db/vector_db.py` | 667 |
 | `graph/__init__.py` | 1 | `graph/edges.py` | 179 |
 | `graph/nodes.py` | 733 | `graph/state.py` | 217 |
-| `graph/workflow_graph.py` | 282 | `main.py` | 240 |
+| `graph/workflow_graph.py` | 272 | `main.py` | 240 |
 | `memory/__init__.py` | 185 | `memory/chat_history.py` | 70 |
 | `memory/consolidator.py` | 154 | `memory/dream.py` | 148 |
 | `memory/long_term.py` | 178 | `memory/short_term.py` | 179 |
@@ -2427,13 +2460,13 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `rag/lexical.py` | 271 | `rag/parent_store.py` | 139 |
 | `rag/prepare.py` | 207 | `rag/reorder.py` | 28 |
 | `rag/rerank.py` | 8 | `rag/retriever.py` | 513 |
-| `rag/structure.py` | 334 | `static/gen_favicon.py` | 148 |
+| `rag/structure.py` | 334 | | |
 | `tools/__init__.py` | 1 | `tools/sqlite_tools.py` | 255 |
 | `utils/__init__.py` | 1 | `utils/cache.py` | 120 |
 | `utils/doc_loader.py` | 341 | `runtime_flags.py` | 66 |
 | `utils/logger.py` | 74 | `utils/validator.py` | 162 |
 | `tests/__init__.py` | 1 | `tests/conftest.py` | 85 |
-| `tests/deadcode_allowlist.py` | 92 | `tests/fakes.py` | 102 |
+| `tests/deadcode_allowlist.py` | 95 | `tests/fakes.py` | 102 |
 | `tests/test_biz_correctness.py` | 769 | `tests/test_chunk_keys.py` | 207 |
 | `tests/test_chunking_baseline.py` | 158 | `tests/test_config_contract.py` | 204 |
 | `tests/test_deadcode.py` | 343 | `tests/test_dify_api.py` | 449 |
@@ -2453,10 +2486,12 @@ python scripts/fix_doc_linenos.py --write       # 按报错自动回填（自动
 | `scripts/baseline_snapshot.py` | 133 | `scripts/check_vector_db.py` | 307 |
 | `scripts/chunk_metrics.py` | 171 | `scripts/chunking_ab.py` | 326 |
 | `scripts/deadcode_scan.py` | 904 | `scripts/eval_generation.py` | 91 |
-| `scripts/fix_doc_linenos.py` | 362 | `scripts/module_inventory.py` | 83 |
-| `scripts/probe_routing.py` | 214 | `scripts/refgraph_scan.py` | 607 |
+| `scripts/fix_doc_linenos.py` | 390 | `scripts/module_inventory.py` | 83 |
+| `scripts/probe_routing.py` | 214 | `scripts/refgraph_scan.py` | 609 |
 | `scripts/seed_enterprise_db.py` | 142 | `scripts/verify_doc_linenos.py` | 924 |
-| `scripts/verify_milvus_lite.py` | 123 | | |
+| `scripts/verify_milvus_lite.py` | 123 | `scripts/backup.sh` | 55 |
+| `scripts/eval_retrieval.py` | 278 | `scripts/gen_favicon.py` | 155 |
+| `scripts/prune_backups.py` | 150 | `scripts/start.sh` | 191 |
 
 ### 附录 B：数据与配置
 
@@ -2487,14 +2522,14 @@ python scripts/verify_doc_linenos.py
 | 5 | 模块标题里的行号范围 | `#### 📍 app/config.py（1-879）` |
 | 6 | 松散单元格里的符号行号 | `prompts.py` 中的 `render` 283-292 |
 | 7 | 散文引用（**必须精确命中某个符号**） | `app/core/tracing.py:131-150` |
-| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（948 行）、`app/config.py`（895 行） |
+| 8 | 通用文件行数（含非 Python、无反引号） | `README.md`（986 行）、`app/config.py`（895 行） |
 | 9 | 区域行号表（裸区间） | `362-417` 向量数据库配置 |
 | 10 | 散文引用精确性（见第 7 类） | `app/core/router_agent.py:270-378` |
 | 11 | **不带文件名的符号引用**（文件由最近的小标题继承） | \| `SCENES` \| 63-69 \| 、（`_decide` 569-694） |
 | 12 | **区间式引用**（符号 + 括号 / 裸文件名 + 冒号 / 表格行首文件名 + 描述里匿名区间） | `state.py`：`GraphState`（50-169）、`config.py:461-468` |
 | 13 | **config 分区表**（真值来自源码 `# ====` 横幅，**不在 AST 里**） | `60-67` 项目路径、`804-879` 服务配置 |
 | 14 | **文档点名的符号必须真实存在**（**唯一不看数字的一类**） | `error_route_edge`、`tool_node` |
-| 15 | **函数级区间**（反引号里带参数 / 名字后带空括号 / 名字与括号之间夹了文字） | `_wire(graph, generation_target=...)`（140-224）、`get_mermaid()`（260-282） |
+| 15 | **函数级区间**（反引号里带参数 / 名字后带空括号 / 名字与括号之间夹了文字） | `_wire(graph, generation_target=...)`（144-228）、`get_mermaid()`（264-272） |
 
 全部一致时退出码 0，有不一致时打印具体行号并返回 1——
 作为质量门禁之一请在本地执行（原 CI 配置已随开源外壳移除）。

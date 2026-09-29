@@ -46,6 +46,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
+import prune_backups
 from verify_doc_linenos import DEFAULT_DOC, collect_symbols, verify
 
 #: 「文档写 A-B，实际 1-C」——文件总行数（区间式）
@@ -313,6 +314,32 @@ def apply_fixes(
     return out, rejected
 
 
+def _prune_backups(root: pathlib.Path) -> None:
+    """把自动快照收敛回保留上界之内（论证见 `prune_backups.py`）。
+
+    这里是**收纳**，不是**前置**：回填已经写完了，清理失败不该把回填结果一起否掉，
+    所以 fail-open。但失败必须打出来——"没清理"和"清理成功"在静默时长得一模一样，
+    而下一次 `--write` 又会叠加一份，问题会一直藏到磁盘上多出几十份快照才被人看见。
+
+    ⚠️ 必须显式传 ``apply=True``：`prune()` 默认是 dry-run。漏了这个参数的表现极难查——
+    接线在、日志在、还打印了"已清掉 N 份"，**实际一份没动**，快照数每次照样 +1。
+    （真踩过一次，是 `test_the_backfill_step_prunes_for_real` 把它钉住的。）
+    """
+    try:
+        kept, dropped, dest = prune_backups.prune(root, apply=True)
+    except (OSError, shutil.Error) as exc:  # 权限 / 占用 / 跨设备，都不该影响回填
+        print(f"⚠️  旧快照清理失败（不影响本次回填）：{exc}")
+        return
+    if dest is not None:
+        print(f"已清掉 {len(dropped)} 份旧快照 → {dest}")
+    elif dropped:
+        # 有候选、又是 apply=True，却没拿到废纸篓目录 —— 保留策略没真正执行。
+        # 这里**绝不能**打印"已清掉"：把没做的事说成做了，比不说更难查。
+        print(f"⚠️  {len(dropped)} 份快照超出上界但【未被移动】——保留策略没生效，请检查 prune()")
+    else:
+        print(f"快照共 {len(kept)} 份，在保留上界内")
+
+
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     write = "--write" in sys.argv
@@ -344,6 +371,7 @@ def main() -> int:
     backup_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, backup_dir / path.name)
     print(f"\n原文档已备份：{backup_dir / path.name}")
+    _prune_backups(backup_dir.parent)
 
     path.write_text("\n".join(fixed_lines) + "\n", encoding="utf-8")
     print(f"已写入 {doc}")

@@ -377,12 +377,12 @@ textarea{resize:vertical;min-height:76px;line-height:1.7}
   <!-- ============ 工作流引擎 ============ -->
   <section class="panel" id="p-flow" data-page-node-id="Z07h9eVOuGZXDpCvhOVdQ8">
     <div class="page-title" data-page-node-id="FnYc1yAedbR18vFqRQQby1">工作流引擎</div>
-    <div class="page-sub" data-page-node-id="q17LA3RCwX7HwJ9aEdES7e">LangGraph 有向图 · 10 节点 / 4 条件边 · 五个 Agent + 按需证据校验（只接两个检索 Agent）</div>
+    <div class="page-sub" data-page-node-id="q17LA3RCwX7HwJ9aEdES7e">LangGraph 有向图 · 10 节点 / 4 条件边 · 五个 Agent + 按需证据校验（三个证据出口都归它）</div>
     <div class="card" data-page-node-id="ZHJkFvAChG2YHBb2UlMGOG">
       <div class="card-h" data-page-node-id="KSmY6kzLNFkGyg5U63zgig"><h2 data-page-node-id="A18uqEjVn1Fj9o5TM2DKBV">工作流拓扑</h2><span class="hint" data-page-node-id="CRWjVDi3Ls9G5p3xwoDofi">记忆加载为入口；路由 Agent 是唯一入口，越界问题在这里就被拦下</span></div>
       <div class="card-b" data-page-node-id="BYlFTWaXcYHyEHDxjnq5BA">
         <div class="flow" data-page-node-id="x049DsAbWFLXC1kvX1wrH6">
-          <svg viewBox="0 0 1000 390" style="width:100%;min-width:840px;height:auto" data-page-node-id="JxNPz8s9SENJV7F9KTF6Z3">
+          <svg viewBox="0 0 1000 430" style="width:100%;min-width:840px;height:auto" data-page-node-id="JxNPz8s9SENJV7F9KTF6Z3">
             <defs data-page-node-id="buFdVLi34sVQZt9y7oqgAz">
               <marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto" data-page-node-id="1gi4x7qJj3NDciC3hiXf6h">
                 <path d="M0,0 L0,6 L8,3 z" fill="#9aa1b5" data-page-node-id="YpoSSRxO9RpgfZN9iENaJg"/>
@@ -396,18 +396,18 @@ textarea{resize:vertical;min-height:76px;line-height:1.7}
             <rect x="16" y="172" width="130" height="48" rx="10" fill="url(#ng)" opacity="0.92" data-page-node-id="MzoLXCxbGp6rfCBSYHr6A7"/>
             <text x="81" y="194" fill="#fff" font-size="12.5" font-weight="600" text-anchor="middle" data-page-node-id="rnI5KMfYvhmDK1a6pAfUlR">memory_load</text>
             <text x="81" y="210" fill="#e3defc" font-size="11" text-anchor="middle" data-page-node-id="ePxD1XwYkqg2yWDWXmdepg">0 · 身份 · 记忆</text>
-            <path d="M146,196 L170,196" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="2dzVEVRsZZX5dSHUHMvcXe"/>
+            <path data-edge="memory_load>router" d="M146,196 L170,196" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="2dzVEVRsZZX5dSHUHMvcXe"/>
 
             <rect x="176" y="172" width="140" height="48" rx="10" fill="url(#ng)" data-page-node-id="fdkEPoR6QMHp79U7oaZ5vQ"/>
             <text x="246" y="194" fill="#fff" font-size="12.5" font-weight="600" text-anchor="middle" data-page-node-id="CYlcbFLm0HhbXufAlYUMoo">router</text>
             <text x="246" y="210" fill="#e3defc" font-size="11" text-anchor="middle" data-page-node-id="63jF5hg1WpJfhq2Mm3tpQG">1 · 路由 Agent · 边界管控</text>
 
             <!-- 五路分发 -->
-            <path d="M316,196 L334,60" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="UhfoHmvHQsmglhglTOQTdz"/>
-            <path d="M316,196 L334,128" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="yXJnIk8reIt5aS3AF08LYP"/>
-            <path d="M316,196 L334,196" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="qJBLEf8V0IwjSBf0LdkFGM"/>
-            <path d="M316,196 L334,264" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="mR9JQzdInEzIsYasym5Jzl"/>
-            <path d="M316,196 L334,332" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="706HOZDUG2quBB1VQRqbJA"/>
+            <path data-edge="router>smalltalk" d="M316,196 L334,60" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="UhfoHmvHQsmglhglTOQTdz"/>
+            <path data-edge="router>out_of_scope" d="M316,196 L334,128" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="yXJnIk8reIt5aS3AF08LYP"/>
+            <path data-edge="router>simple_rag" d="M316,196 L334,196" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="qJBLEf8V0IwjSBf0LdkFGM"/>
+            <path data-edge="router>complex_rag" d="M316,196 L334,264" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="mR9JQzdInEzIsYasym5Jzl"/>
+            <path data-edge="router>tool" d="M316,196 L334,332" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="706HOZDUG2quBB1VQRqbJA"/>
             <text x="322" y="122" font-size="10.5" fill="#8a90a3" text-anchor="end" data-page-node-id="wBXmSFDNeglkKwHBkQWDVH">scene 五选一</text>
 
             <rect x="340" y="36" width="140" height="48" rx="10" fill="#fff" stroke="#e0e1f0" stroke-width="1.5" data-page-node-id="x74VWW2yGXGJH4FXScIaRz"/>
@@ -431,27 +431,26 @@ textarea{resize:vertical;min-height:76px;line-height:1.7}
             <text x="410" y="346" font-size="11" text-anchor="middle" fill="#8a90a3" data-page-node-id="lVcET7dLHTgSUr3HXMGMWq">工具 Agent · function calling</text>
 
             <!-- 工具 Agent 的降级改道（落在边上，拓扑可见） -->
-            <path d="M410,308 L410,228" stroke="#c9c8f7" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)" data-page-node-id="WlEaP4wHgXrVh362G2qSQ5"/>
+            <path data-edge="tool>simple_rag" d="M410,308 L410,228" stroke="#c9c8f7" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)" data-page-node-id="WlEaP4wHgXrVh362G2qSQ5"/>
             <text x="418" y="272" font-size="10.5" fill="#8a90a3" data-page-node-id="7Q0mXyTfGk1sVpWcJdRhLb">不支持 FC → 改道</text>
 
             <!-- 两个检索证据出口汇聚到校验，再由校验决定生成还是退回重判 -->
-            <path d="M480,196 C506,196 514,258 540,260" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="bNq7yUvHsW3kFpZmGtXrCv"/>
-            <path d="M480,264 L544,264" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="hLd5jRcTqY8nBvMxPkWsEa"/>
-
-            <!-- 工具证据不经校验，直接进 L4（2026-09-24 摘掉 tool → verifier 那条边） -->
-            <path d="M480,332 C560,332 665,306 730,290" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="yFb3vQmKnZ6tXwHdRpLcJs"/>
-            <text x="672" y="313" font-size="10.5" fill="#8a90a3" text-anchor="middle">取到证据 → L4</text>
-            <text x="672" y="326" font-size="10.5" fill="#8a90a3" text-anchor="middle">（不经校验）</text>
+            <path data-edge="simple_rag>verifier" d="M480,196 C506,196 514,258 540,260" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="bNq7yUvHsW3kFpZmGtXrCv"/>
+            <path data-edge="complex_rag>verifier" d="M480,264 L544,264" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="hLd5jRcTqY8nBvMxPkWsEa"/>
+            <!-- 工具证据与两个检索出口汇合到校验（2026-09-24 这条边摘掉过又接回来） -->
+            <path data-edge="tool>verifier" d="M480,332 C524,332 562,318 598,299" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="yFb3vQmKnZ6tXwHdRpLcJs"/>
+            <text x="596" y="311" font-size="10.5" fill="#8a90a3" data-page-node-id="vQm3bFyKnZ6tXwHdRpLcJs">取到证据 → 校验</text>
+            <text x="596" y="323" font-size="10.5" fill="#8a90a3" data-page-node-id="wRn4cGzLoA7uYxIeSqMdKt">（按需复核）</text>
 
             <rect x="548" y="240" width="140" height="56" rx="10" fill="#fff" stroke="#c9c8f7" stroke-width="1.5"/>
             <text x="618" y="264" font-size="12.5" font-weight="600" text-anchor="middle" fill="#4f46e5">verifier</text>
-            <text x="618" y="282" font-size="11" text-anchor="middle" fill="#8a90a3">3 · 证据校验 · 只接检索</text>
+            <text x="618" y="282" font-size="11" text-anchor="middle" fill="#8a90a3">3 · 证据校验 · 三条链路</text>
 
             <!-- 图里唯一的一条回边：校验判为不符且还有预算时退回路由重判 -->
-            <path d="M618,298 C618,366 556,380 470,380 C382,380 300,344 250,228" stroke="#c9c8f7" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+            <path data-edge="verifier>router" d="M618,298 C618,366 556,380 470,380 C382,380 300,344 250,228" stroke="#c9c8f7" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)"/>
             <text x="430" y="368" font-size="10.5" fill="#8a90a3" text-anchor="middle">不符且还有预算 → 退回重判</text>
 
-            <path d="M690,268 L730,268" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+            <path data-edge="verifier>generate_answer" d="M690,268 L730,268" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
 
             <!-- 证据出口 → L4 -->
             <rect x="736" y="240" width="150" height="56" rx="10" fill="url(#ng)" data-page-node-id="pQ3nRaBvCk8dWxZtYfMgHs"/>
@@ -462,22 +461,24 @@ textarea{resize:vertical;min-height:76px;line-height:1.7}
             <rect x="736" y="326" width="150" height="48" rx="10" fill="#fff" stroke="#f0dcb4" stroke-width="1.5" data-page-node-id="cWm8tZqRvB4nJkYxLdHsPf"/>
             <text x="811" y="348" font-size="12.5" font-weight="600" text-anchor="middle" fill="#b45309" data-page-node-id="eKx5rNpQmW9sTvBdYcHjGz">human_fallback</text>
             <text x="811" y="364" font-size="11" text-anchor="middle" fill="#a06d12" data-page-node-id="fTq2mBvLcW8nRxKdYpHsZj">工具执行失败 · 生成失败</text>
-            <path d="M480,332 C620,332 660,342 730,350" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="gRn7vKpTmQ4sXwBdLcYhFz"/>
-            <path d="M811,296 L811,320" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="jMv3tQrWnB6kYxHdLpCsGf"/>
+            <path data-edge="tool>human_fallback" d="M480,332 C620,332 660,342 730,350" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="gRn7vKpTmQ4sXwBdLcYhFz"/>
+            <path data-edge="generate_answer>human_fallback" d="M811,296 L811,320" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)" data-page-node-id="jMv3tQrWnB6kYxHdLpCsGf"/>
 
             <!-- END -->
             <circle cx="960" cy="250" r="22" fill="#e7f6f0" stroke="#bfe5d6" stroke-width="1.5" data-page-node-id="sXq8mBvTcW2nRkYdLpHjFz"/>
             <text x="960" y="254" font-size="11.5" font-weight="600" text-anchor="middle" fill="#059669" data-page-node-id="tYr4nKpQmW7sXvBdLcHjGz">END</text>
-            <path d="M480,60 C700,60 870,180 934,238" stroke="#c9c8f7" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)" data-page-node-id="vBm6tQrWnK3sYxHdLpCjFz"/>
-            <path d="M480,128 C700,128 870,196 934,242" stroke="#c9c8f7" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)" data-page-node-id="wCn5rKpQmT8sXvBdLcYjGz"/>
+            <path data-edge="smalltalk>__end__" d="M480,60 C700,60 870,180 934,238" stroke="#c9c8f7" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)" data-page-node-id="vBm6tQrWnK3sYxHdLpCjFz"/>
+            <path data-edge="out_of_scope>__end__" d="M480,128 C700,128 870,196 934,242" stroke="#c9c8f7" stroke-width="1.5" fill="none" stroke-dasharray="4 3" marker-end="url(#ar)" data-page-node-id="wCn5rKpQmT8sXvBdLcYjGz"/>
             <text x="712" y="66" font-size="10.5" fill="#8a90a3" text-anchor="middle" data-page-node-id="xDo4mBvLcW9nRxKdYpHsJf">直答出口 · 不进 L4</text>
-            <path d="M888,266 L934,254" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="yEp3nKqRmW6sXvBdLcYjHz"/>
-            <path d="M888,348 L934,262" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="zFq2mBvLcW7nRxKdYpHsJz"/>
+            <path data-edge="generate_answer>__end__" d="M888,266 L934,254" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="yEp3nKqRmW6sXvBdLcYjHz"/>
+            <path data-edge="human_fallback>__end__" d="M888,348 L934,262" stroke="#9aa1b5" stroke-width="1.5" marker-end="url(#ar)" data-page-node-id="zFq2mBvLcW7nRxKdYpHsJz"/>
+            <path data-edge="tool>__end__" d="M440,356 C440,404 520,412 660,410 C860,408 944,392 956,278" stroke="#9aa1b5" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+            <text x="700" y="424" font-size="10.5" fill="#8a90a3" text-anchor="middle">反问用户 · 已有答案 → 结束</text>
           </svg>
         </div>
         <div class="page-sub" style="margin-top:10px" data-page-node-id="aGr1nKpQmW8sXvBdLcYhFz">
-          虚线 = 不走 L4 的出口与<b>回边</b>。工具 Agent 的四个去向：<b>反问用户</b> → END，<b>决策失败</b> → 人工兜底，<b>不支持 function calling</b> → 改道简单 RAG（回到校验），<b>取到证据</b> → <b>直接进 L4</b>——工具链路<b>不经证据校验</b>：工具结果是自己库里的一行结构化记录，不存在让检索偏掉的机制（片段被切碎 / Top1 分不达标 / 多路融合选错），用为检索设计的裁判去判它，判据与风险不是同一件事。
-          校验<b>按需触发</b>，且<b>只接两个检索 Agent</b>：正常轮次跳过、零代价（<code>evidence_aligned = null</code>，意思是"没校验"，不等于"对齐"）；动手时只回答"取回的证据是不是真的能回答这个问题"——<b>对齐</b> → L4 受控生成，<b>不符且还有重试预算</b> → 退回路由重判（图里唯一一条回边，上界见 <code>ROUTE_RETRY_BUDGET</code>）。
+          虚线 = 不走 L4 的出口与<b>回边</b>。工具 Agent 的四个去向：<b>反问用户</b> → END，<b>决策失败</b> → 人工兜底，<b>不支持 function calling</b> → 改道简单 RAG（回到校验），<b>取到证据</b> → <b>与两个检索出口汇合，一起进证据校验</b>。
+          校验<b>按需触发</b>，<b>三条证据出口都归它</b>（simple_rag / complex_rag / tool）：正常轮次跳过、零代价（<code>evidence_aligned = null</code>，意思是"没校验"，不等于"对齐"）；动手时只回答"取回的证据是不是真的能回答这个问题"——<b>对齐</b> → L4 受控生成，<b>不符且还有重试预算</b> → 退回路由重判（图里唯一一条回边，上界见 <code>ROUTE_RETRY_BUDGET</code>）。判据只看"这一轮有没有可疑迹象"，<b>不看"这是哪条链路"</b>。
         </div>
       </div>
     </div>
@@ -975,8 +976,8 @@ const NODE_DESC = {
   out_of_scope:['越界拦截','常量话术，只被判别、不被生成，因此不可能编造事实。'],
   simple_rag:['简单 RAG Agent','单文档即可回答的制度问题：一次混合检索（向量+词面 RRF 融合）。'],
   complex_rag:['复杂 RAG Agent','需跨文档对比的问题：拆解 → 多次检索 → 合并去重；原问题始终参与检索。'],
-  tool:['工具 Agent','3 个只读工具的 function calling：参数抽取、缺失追问、链式调用、SQLite 查询。证据出口不经证据校验，直接进 L4（结构化记录不存在"硬凑"，见工作流拓扑的说明）。'],
-  verifier:['证据校验（按需 · 只接检索链路）','它是修复手段，不是每轮都走的工序：只在有理由怀疑证据不对时才动手，正常轮次零代价跳过、不发请求（evidence_aligned 记为"未校验"，不是"对齐"）。动手时只判一件事：取回的证据是不是真的回答了这个问题；判不了就放行（fail-open）；判为不符且还有预算时退回路由重判——图里唯一一条回边。工具 Agent 不在这条路上：tool → verifier 这条边已摘掉（理由见工作流拓扑的说明）。'],
+  tool:['工具 Agent','3 个只读工具的 function calling：参数抽取、缺失追问、链式调用、SQLite 查询。证据出口先汇到证据校验，判据说这轮没有可疑迹象才零代价跳过、直接进 L4（见工作流拓扑的说明）。'],
+  verifier:['证据校验（按需 · 三条证据出口都归它）','它是修复手段，不是每轮都走的工序：只在有理由怀疑证据不对时才动手，正常轮次零代价跳过、不发请求（evidence_aligned 记为"未校验"，不是"对齐"）。动手时只判一件事：取回的证据是不是真的回答了这个问题；判不了就放行（fail-open）；判为不符且还有预算时退回路由重判——图里唯一一条回边。工具 Agent 也在这条路上（2026-09-24 这条边摘掉过又接回来）：干净的工具轮同样零代价跳过，出过状况的轮次才复核。'],
   generate_answer:['受控生成','RAG L4：引用溯源标注、置信度拒答、流式输出。'],
   human_fallback:['人工兜底','检索全失败 / 工具执行失败 / 参数不合规时的终点，阻断幻觉并转人工。'],
 };
